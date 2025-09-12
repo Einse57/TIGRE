@@ -50,6 +50,8 @@ TIGRE is a GPU-based CT reconstruction software repository that contains a wide 
 
 - State-of-the-art implementations of projection and backprojection operations on **GPUs** (including **multi-GPUs**), with a simple interface using higher level languages to facilitate the development of new methods.
 
+- **Multi-Backend GPU Support**: CUDA for NVIDIA GPUs, **SYCL for Intel GPUs** (Arc, integrated graphics), and CPU fallback for maximum compatibility.
+
 - **Flexible CT geometry:** Cone Beam, Parallel Beam, Digital Tomosynthesis, C-arm CT, and any other geometry.  Geometric parameters are defined per projection, not per scan.
 
 - A wide range of reconstruction algorithms for CT.
@@ -76,13 +78,26 @@ TIGRE is a GPU-based CT reconstruction software repository that contains a wide 
 
 - Nikon and Varian and Phillips (DICOM) scanner data loaders. 
 
+## Hardware Support
+
+TIGRE supports multiple hardware backends for maximum performance and compatibility:
+
+- **NVIDIA GPUs**: Full CUDA support for GeForce, Quadro, and Tesla cards
+- **Intel GPUs**: SYCL backend for Intel Arc GPUs and integrated graphics (Intel Iris Xe, UHD Graphics)
+- **CPU**: Multi-threaded CPU implementation as fallback
+- **Multi-GPU**: Automatic load balancing across multiple GPUs when available
+
+The backend selection is automatic but can be manually configured. See [SYCL Backend Guide](Frontispiece/SYCL_Backend.md) for Intel GPU setup.
+
 ## Installation
 
 MATLAB and Python builds are both fully supported.
 
 - [Installation instructions and requirements for MATLAB](Frontispiece/MATLAB_installation.md).
 
-- [Installation instructions and requirements for Python](Frontispiece/python_installation.md). 
+- [Installation instructions and requirements for Python](Frontispiece/python_installation.md).
+
+- [**Intel GPU Support**: SYCL backend setup and usage guide](Frontispiece/SYCL_Backend.md).
 
 **Advanced, not required to run TIGRE**, will change the source code. Only do if performance is critical.
 
@@ -92,6 +107,8 @@ MATLAB and Python builds are both fully supported.
 ## Getting started
 
 Once TIGRE in installed, we strongly suggest you have a look at the Demos folder for each of the languages, [MATLAB](https://github.com/CERN/TIGRE/tree/master/MATLAB/Demos) or [Python](https://github.com/CERN/TIGRE/tree/master/Python/demos). 
+
+**Intel GPU Users**: Try the [SYCL Quick Start](Python/demos/sycl_quickstart.py) for a 5-minute introduction to Intel GPU acceleration, or explore [comprehensive SYCL examples](Python/demos/sycl_examples.py).
 
 There is no documentation page for TIGRE (other than the function documentation), but all features are descrived and demonstrated with working code in the demos. They also serve as a tutorial of each feature. We strongly recommend you explore the first 4 demos for the basic TIGRE functionality, and look at the following ones for more advanced geometry or reconstruction functions. 
 

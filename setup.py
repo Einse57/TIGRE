@@ -148,6 +148,47 @@ for item in CC_COMPATIBILITY_TABLE:
     str_arg = f"-gencode=arch=compute_{item[0]},code=sm_{item[1]}"
     COMPUTE_CAPABILITY_ARGS.insert(0, str_arg)
 
+
+# Backend support configuration
+# Check for SYCL backend availability  
+def locate_backend():
+    """Locate backend libraries (SYCL, etc.)"""
+    backend_config = {}
+    
+    # Check for SYCL/Intel oneAPI
+    oneapi_paths = [
+        os.environ.get("ONEAPI_ROOT"),
+        "C:/Program Files (x86)/Intel/oneAPI",
+        "/opt/intel/oneapi"
+    ]
+    
+    for oneapi_path in oneapi_paths:
+        if oneapi_path and os.path.exists(oneapi_path):
+            sycl_include = pjoin(oneapi_path, "compiler/latest/include")
+            sycl_lib = pjoin(oneapi_path, "compiler/latest/lib")
+            
+            if os.path.exists(sycl_include) and os.path.exists(sycl_lib):
+                backend_config["SYCL"] = {
+                    "include": sycl_include,
+                    "lib": sycl_lib,
+                    "available": True
+                }
+                break
+    
+    if "SYCL" not in backend_config:
+        backend_config["SYCL"] = {"available": False}
+    
+    return backend_config
+
+BACKEND_CONFIG = locate_backend()
+
+# Check if pre-built SYCL library exists
+TIGRE_SYCL_LIB = "tigre_sycl.lib" if IS_WINDOWS else "tigre_sycl.a"
+HAS_PREBUILT_SYCL = os.path.exists(TIGRE_SYCL_LIB)
+
+print(f"SYCL backend available: {BACKEND_CONFIG['SYCL']['available']}")
+print(f"Pre-built SYCL library: {HAS_PREBUILT_SYCL}")
+
 # Obtain the numpy include directory.  This logic works across numpy versions.
 try:
     NUMPY_INCLUDE = numpy.get_include()
@@ -408,6 +449,60 @@ Atb_ext = Extension(
 )
 
 
+# Backend extensions (SYCL/Intel oneAPI support)
+backend_extensions = []
+
+if HAS_PREBUILT_SYCL and BACKEND_CONFIG["SYCL"]["available"]:
+    # Create Ax backend extension
+    Ax_backend_ext = Extension(
+        "_Ax_backend",
+        sources=include_headers(
+            [
+                "src/backends/device_backend_factory_no_sycl.cpp",
+                "Python/tigre/utilities/cuda_interface/_Ax_backend.pyx",
+            ],
+            sdist=sys.argv[1] == "sdist",
+        ),
+        define_macros=define_macros + [("TIGRE_BUILD_SYCL_BACKEND", 1)],
+        library_dirs=[BACKEND_CONFIG["SYCL"]["lib"]] if BACKEND_CONFIG["SYCL"]["available"] else [],
+        libraries=[TIGRE_SYCL_LIB.replace('.lib', '').replace('.a', ''), "sycl8", "libirc", "libircmd"] if IS_WINDOWS else [TIGRE_SYCL_LIB.replace('.lib', '').replace('.a', ''), "sycl"],
+        extra_objects=[TIGRE_SYCL_LIB],
+        language="c++",
+        include_dirs=[
+            NUMPY_INCLUDE, 
+            "include",
+            BACKEND_CONFIG["SYCL"]["include"] if BACKEND_CONFIG["SYCL"]["available"] else ""
+        ],
+    )
+    
+    # Create Atb backend extension
+    Atb_backend_ext = Extension(
+        "_Atb_backend", 
+        sources=include_headers(
+            [
+                "src/backends/device_backend_factory_no_sycl.cpp",
+                "Python/tigre/utilities/cuda_interface/_Atb_backend.pyx",
+            ],
+            sdist=sys.argv[1] == "sdist",
+        ),
+        define_macros=define_macros + [("TIGRE_BUILD_SYCL_BACKEND", 1)],
+        library_dirs=[BACKEND_CONFIG["SYCL"]["lib"]] if BACKEND_CONFIG["SYCL"]["available"] else [],
+        libraries=[TIGRE_SYCL_LIB.replace('.lib', '').replace('.a', ''), "sycl8", "libirc", "libircmd"] if IS_WINDOWS else [TIGRE_SYCL_LIB.replace('.lib', '').replace('.a', ''), "sycl"],
+        extra_objects=[TIGRE_SYCL_LIB],
+        language="c++",
+        include_dirs=[
+            NUMPY_INCLUDE,
+            "include", 
+            BACKEND_CONFIG["SYCL"]["include"] if BACKEND_CONFIG["SYCL"]["available"] else ""
+        ],
+    )
+    
+    backend_extensions.extend([Ax_backend_ext, Atb_backend_ext])
+    print("✅ SYCL backend extensions added")
+else:
+    print("⚠️  SYCL backend extensions skipped (missing prebuilt library or Intel oneAPI)")
+
+
 tv_proximal_ext = Extension(
     "_tv_proximal",
     sources=include_headers(
@@ -513,7 +608,7 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     data_files=[("data", ["Common/data/head.mat"])],
-    ext_modules=[Ax_ext, Atb_ext, tv_proximal_ext, minTV_ext, AwminTV_ext, gpuUtils_ext, RandomNumberGenerator_ext],
+    ext_modules=[Ax_ext, Atb_ext, tv_proximal_ext, minTV_ext, AwminTV_ext, gpuUtils_ext, RandomNumberGenerator_ext] + backend_extensions,
     py_modules=["tigre.py"],
     cmdclass={"build_ext": BuildExtension},
     # since the package has c code, the egg cannot be zipped
