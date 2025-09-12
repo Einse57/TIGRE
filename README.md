@@ -50,7 +50,7 @@ TIGRE is a GPU-based CT reconstruction software repository that contains a wide 
 
 - State-of-the-art implementations of projection and backprojection operations on **GPUs** (including **multi-GPUs**), with a simple interface using higher level languages to facilitate the development of new methods.
 
-- **Multi-Backend GPU Support**: CUDA for NVIDIA GPUs, **SYCL for Intel GPUs** (Arc, integrated graphics), and CPU fallback for maximum compatibility.
+- **Multi-Backend GPU Support**: CUDA for NVIDIA GPUs, **SYCL GPUs** (discrete, integrated graphics), and CPU fallback for maximum compatibility.
 
 - **Flexible CT geometry:** Cone Beam, Parallel Beam, Digital Tomosynthesis, C-arm CT, and any other geometry.  Geometric parameters are defined per projection, not per scan.
 

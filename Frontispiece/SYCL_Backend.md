@@ -2,22 +2,22 @@
 
 ## Overview
 
-TIGRE now supports Intel GPU acceleration through the SYCL (SYCL C++) backend, enabling high-performance computed tomography reconstruction on Intel Arc GPUs, integrated Intel graphics, and other SYCL-compatible devices. This integration provides a multi-backend architecture that seamlessly supports CUDA, SYCL, and CPU execution modes.
+TIGRE now supports GPU acceleration through the SYCL (SYCL C++) backend, enabling high-performance computed tomography reconstruction non-CUDA GPUs, integrated graphics, and other SYCL-compatible devices. This integration provides a multi-backend architecture that supports CUDA, SYCL, and CPU execution modes.
 
 ## Features
 
-- **Intel GPU Acceleration**: Native support for Intel Arc GPUs and integrated graphics
-- **Multi-Backend Architecture**: Seamless switching between CUDA, SYCL, and CPU backends
-- **Full TIGRE Compatibility**: Complete support for all TIGRE reconstruction algorithms
+- **Broad GPU Acceleration**: Native support for SYCL GPUs and integrated graphics
+- **Multi-Backend Architecture**: Switches between CUDA, SYCL, and CPU backends
+- **TIGRE Compatibility**: Support for all TIGRE reconstruction algorithms
 - **Python Integration**: Full Python binding support with automatic backend selection
-- **Memory Optimization**: Efficient GPU memory management for large datasets
+- **Memory Optimization**: GPU memory management for large datasets
 
 ## Requirements
 
 ### Hardware
-- Intel Arc GPU (recommended) or Intel integrated graphics with SYCL support
+- GPU or integrated graphics with SYCL support
 - Minimum 4GB GPU memory for typical reconstruction tasks
-- Intel CPU with integrated graphics (backup option)
+- CPU with integrated graphics (backup option)
 
 ### Software
 - **Intel oneAPI DPC++ Compiler 2025.1.1 or later**
@@ -162,18 +162,6 @@ All TIGRE algorithms are supported with SYCL backend:
 - **TV Regularization**: Total Variation minimization
 - **PICCS**: Prior Image Constrained Compressed Sensing
 - **Statistical Algorithms**: MLEM, OSEM
-
-## Performance Benchmarks
-
-Typical performance improvements with Intel Arc A770 vs CPU-only:
-
-| Algorithm | Dataset Size | CPU Time | SYCL Time | Speedup |
-|-----------|--------------|----------|-----------|---------|
-| FDK       | 256³ volume  | 45.2s    | 3.8s      | 11.9x   |
-| CGLS      | 128³ volume  | 28.7s    | 2.1s      | 13.7x   |
-| SART      | 256³ volume  | 67.3s    | 5.9s      | 11.4x   |
-
-*Results may vary based on specific hardware configuration*
 
 ## Troubleshooting
 
