@@ -131,34 +131,83 @@ def Ax_backend(np.ndarray[np.float32_t, ndim=3] img not None,
         raise MemoryError("Failed to allocate memory for geometry parameters")
     
     # Copy geometry parameters to structure with correct field names
-    # Voxel parameters
-    c_geometry.nVoxelX = geometry.nVoxel[0]
-    c_geometry.nVoxelY = geometry.nVoxel[1] 
-    c_geometry.nVoxelZ = geometry.nVoxel[2]
-    c_geometry.sVoxelX = geometry.sVoxel[0]
-    c_geometry.sVoxelY = geometry.sVoxel[1]
-    c_geometry.sVoxelZ = geometry.sVoxel[2]
-    c_geometry.dVoxelX = geometry.dVoxel[0]
-    c_geometry.dVoxelY = geometry.dVoxel[1]
-    c_geometry.dVoxelZ = geometry.dVoxel[2]
+    # Voxel parameters - safely extract from arrays with correct types
+    c_geometry.nVoxelX = int(geometry.nVoxel[0])
+    c_geometry.nVoxelY = int(geometry.nVoxel[1]) 
+    c_geometry.nVoxelZ = int(geometry.nVoxel[2])
+    c_geometry.sVoxelX = float(geometry.sVoxel[0])
+    c_geometry.sVoxelY = float(geometry.sVoxel[1])
+    c_geometry.sVoxelZ = float(geometry.sVoxel[2])
+    c_geometry.dVoxelX = float(geometry.dVoxel[0])
+    c_geometry.dVoxelY = float(geometry.dVoxel[1])
+    c_geometry.dVoxelZ = float(geometry.dVoxel[2])
     
-    # Detector parameters
-    c_geometry.nDetecU = geometry.nDetector[0]
-    c_geometry.nDetecV = geometry.nDetector[1]
-    c_geometry.sDetecU = geometry.sDetector[0]
-    c_geometry.sDetecV = geometry.sDetector[1]
-    c_geometry.dDetecU = geometry.dDetector[0]
-    c_geometry.dDetecV = geometry.dDetector[1]
+    # Detector parameters - safely extract from arrays with correct types
+    c_geometry.nDetecU = int(geometry.nDetector[0])
+    c_geometry.nDetecV = int(geometry.nDetector[1])
+    c_geometry.sDetecU = float(geometry.sDetector[0])
+    c_geometry.sDetecV = float(geometry.sDetector[1])
+    c_geometry.dDetecU = float(geometry.dDetector[0])
+    c_geometry.dDetecV = float(geometry.dDetector[1])
     
-    # Set pointer field values
-    dso_ptr[0] = geometry.DSO
-    dsd_ptr[0] = geometry.DSD
-    offOrigX_ptr[0] = geometry.offOrigin[0] if hasattr(geometry, 'offOrigin') else 0.0
-    offOrigY_ptr[0] = geometry.offOrigin[1] if hasattr(geometry, 'offOrigin') else 0.0
-    offOrigZ_ptr[0] = geometry.offOrigin[2] if hasattr(geometry, 'offOrigin') else 0.0
-    offDetecU_ptr[0] = geometry.offDetector[0] if hasattr(geometry, 'offDetector') else 0.0
-    offDetecV_ptr[0] = geometry.offDetector[1] if hasattr(geometry, 'offDetector') else 0.0
-    cor_ptr[0] = geometry.COR if hasattr(geometry, 'COR') else 0.0
+    # Set pointer field values - safely extract scalars from arrays/scalars
+    # Handle DSO - after check_geo() it becomes 2D array (nProj, 1)
+    if hasattr(geometry.DSO, '__len__'):
+        if geometry.DSO.ndim == 2:
+            dso_ptr[0] = float(geometry.DSO[0, 0])
+        else:
+            dso_ptr[0] = float(geometry.DSO.flat[0])
+    else:
+        dso_ptr[0] = float(geometry.DSO)
+    
+    # Handle DSD - after check_geo() it becomes 2D array (nProj, 1)
+    if hasattr(geometry.DSD, '__len__'):
+        if geometry.DSD.ndim == 2:
+            dsd_ptr[0] = float(geometry.DSD[0, 0])
+        else:
+            dsd_ptr[0] = float(geometry.DSD.flat[0])
+    else:
+        dsd_ptr[0] = float(geometry.DSD)
+    
+    # Handle offOrigin components - geometry arrays are 2D after check_geo()
+    if hasattr(geometry, 'offOrigin') and geometry.offOrigin is not None:
+        if geometry.offOrigin.ndim == 2:
+            # After check_geo(), offOrigin is shape (nProj, 3)
+            offOrigX_ptr[0] = float(geometry.offOrigin[0, 0])
+            offOrigY_ptr[0] = float(geometry.offOrigin[0, 1])
+            offOrigZ_ptr[0] = float(geometry.offOrigin[0, 2])
+        else:
+            # Original 1D case
+            offOrigX_ptr[0] = float(geometry.offOrigin[0])
+            offOrigY_ptr[0] = float(geometry.offOrigin[1])
+            offOrigZ_ptr[0] = float(geometry.offOrigin[2])
+    else:
+        offOrigX_ptr[0] = 0.0
+        offOrigY_ptr[0] = 0.0
+        offOrigZ_ptr[0] = 0.0
+    
+    # Handle offDetector components - geometry arrays are 2D after check_geo()
+    if hasattr(geometry, 'offDetector') and geometry.offDetector is not None:
+        if geometry.offDetector.ndim == 2:
+            # After check_geo(), offDetector is shape (nProj, 2)
+            offDetecU_ptr[0] = float(geometry.offDetector[0, 0])
+            offDetecV_ptr[0] = float(geometry.offDetector[0, 1])
+        else:
+            # Original 1D case
+            offDetecU_ptr[0] = float(geometry.offDetector[0])
+            offDetecV_ptr[0] = float(geometry.offDetector[1])
+    else:
+        offDetecU_ptr[0] = 0.0
+        offDetecV_ptr[0] = 0.0
+    
+    # Handle COR (could be scalar or array)
+    if hasattr(geometry, 'COR') and geometry.COR is not None:
+        if hasattr(geometry.COR, '__len__'):
+            cor_ptr[0] = float(geometry.COR.flat[0])
+        else:
+            cor_ptr[0] = float(geometry.COR)
+    else:
+        cor_ptr[0] = 0.0
     
     # Assign pointers to geometry structure
     c_geometry.DSO = dso_ptr
@@ -170,8 +219,12 @@ def Ax_backend(np.ndarray[np.float32_t, ndim=3] img not None,
     c_geometry.offDetecV = offDetecV_ptr
     c_geometry.COR = cor_ptr
     
-    # Set other parameters
-    c_geometry.accuracy = getattr(geometry, 'accuracy', 0.5)
+    # Set other parameters - handle potential array from cast_to_single
+    accuracy_val = getattr(geometry, 'accuracy', 0.5)
+    if hasattr(accuracy_val, '__len__'):
+        c_geometry.accuracy = float(accuracy_val.flat[0])
+    else:
+        c_geometry.accuracy = float(accuracy_val)
     
     # Convert backend string to enum
     backend_str = backend.encode('utf-8')
@@ -190,7 +243,7 @@ def Ax_backend(np.ndarray[np.float32_t, ndim=3] img not None,
     
     # Calculate buffer sizes
     volume_size = img.size * sizeof(float)
-    nDetectorPixels = geometry.nDetector[0] * geometry.nDetector[1] 
+    nDetectorPixels = int(geometry.nDetector[0]) * int(geometry.nDetector[1]) 
     projection_size = total_projections * nDetectorPixels * sizeof(float)
     
     # Allocate device buffers
@@ -235,8 +288,8 @@ def Ax_backend(np.ndarray[np.float32_t, ndim=3] img not None,
         
         # Create output numpy array
         shape[0] = <np.npy_intp> total_projections
-        shape[1] = <np.npy_intp> (<np.npy_long>(geometry.nDetector[0]))
-        shape[2] = <np.npy_intp> (<np.npy_long>(geometry.nDetector[1]))
+        shape[1] = <np.npy_intp> (<np.npy_long>(int(geometry.nDetector[0])))
+        shape[2] = <np.npy_intp> (<np.npy_long>(int(geometry.nDetector[1])))
         
         projections = np.PyArray_SimpleNewFromData(3, shape, np.NPY_FLOAT32, c_projections_flat)
         np.PyArray_ENABLEFLAGS(projections, np.NPY_ARRAY_OWNDATA)  # Transfer ownership

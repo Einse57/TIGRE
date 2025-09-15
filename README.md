@@ -50,7 +50,7 @@ TIGRE is a GPU-based CT reconstruction software repository that contains a wide 
 
 - State-of-the-art implementations of projection and backprojection operations on **GPUs** (including **multi-GPUs**), with a simple interface using higher level languages to facilitate the development of new methods.
 
-- **Multi-Backend GPU Support**: CUDA for NVIDIA GPUs, **SYCL GPUs** (discrete, integrated graphics), and CPU fallback for maximum compatibility.
+- **Multi-Backend GPU Support**: CUDA for NVIDIA GPUs, **SYCL for Intel GPUs** (Arc discrete GPUs, Iris Xe integrated graphics), and CPU fallback for maximum compatibility.
 
 - **Flexible CT geometry:** Cone Beam, Parallel Beam, Digital Tomosynthesis, C-arm CT, and any other geometry.  Geometric parameters are defined per projection, not per scan.
 
@@ -87,7 +87,7 @@ TIGRE supports multiple hardware backends for maximum performance and compatibil
 - **CPU**: Multi-threaded CPU implementation as fallback
 - **Multi-GPU**: Automatic load balancing across multiple GPUs when available
 
-The backend selection is automatic but can be manually configured. See [SYCL Backend Guide](Frontispiece/SYCL_Backend.md) for Intel GPU setup.
+The backend selection is automatic but can be manually configured. See [Intel GPU SYCL Backend Guide](README_SYCL.md) for Intel GPU setup and usage.
 
 ## Installation
 
@@ -97,7 +97,7 @@ MATLAB and Python builds are both fully supported.
 
 - [Installation instructions and requirements for Python](Frontispiece/python_installation.md).
 
-- [**Intel GPU Support**: SYCL backend setup and usage guide](Frontispiece/SYCL_Backend.md).
+- [**Intel GPU Support**: SYCL backend setup and usage guide](README_SYCL.md).
 
 **Advanced, not required to run TIGRE**, will change the source code. Only do if performance is critical.
 

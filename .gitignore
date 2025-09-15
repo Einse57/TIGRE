@@ -5,6 +5,44 @@ so.*
 *.tiff
 *.png
 *.mat
+
+# SYCL/Intel oneAPI build artifacts
+*.lib
+*.dll
+*.obj
+*.pyd
+*.exp
+*.bc
+*.manifest
+*.new.lib
+*.new.obj
+sycl*.lib
+libsycl*
+libirc*
+libm*.lib
+ur_*.dll
+ze_*.dll
+tbb*.dll
+svml_*.dll
+opencl.dll
+OpenCL.lib
+omptarget.lib
+pstloffload*.lib
+qkmalloc.lib
+xpti*.lib
+devicelib-*
+.python-version
+
+# Build directories
+build/
+build_sycl/
+clang/
+clc/
+cmake/
+pkgconfig/
+pytigre.egg-info/
+__pycache__/
+
 ## Matlab ignore
 
 *.asv

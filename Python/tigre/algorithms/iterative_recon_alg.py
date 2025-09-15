@@ -1,11 +1,19 @@
-from __future__ import division
-
 import copy
 import time
 
 import numpy as np
-from _AwminTV import AwminTV
-from _minTV import minTV
+
+# SYCL-only mode: Check if TV extensions are available
+try:
+    from _AwminTV import AwminTV
+    from _minTV import minTV
+    HAS_TV_EXTENSIONS = True
+except ImportError:
+    # SYCL-only mode - use fallback implementations
+    from tigre.utilities.tv_stubs import AwminTV, minTV
+    HAS_TV_EXTENSIONS = False
+    print("⚠️  CUDA TV extensions not available - using fallback implementations")
+
 from tigre.algorithms.single_pass_algorithms import FDK
 from tigre.utilities.Atb import Atb
 from tigre.utilities.Ax import Ax

@@ -6,7 +6,16 @@
    gpuids = getGpuIds('GeForce RTX 2080 Ti')
 3. Pass the gpuids instance to Tigre functions.
 """
-import _gpuUtils as gpuUtils
+
+# Try to import CUDA-based gpuUtils, fall back to SYCL version
+try:
+    import _gpuUtils as gpuUtils
+    SYCL_ONLY_MODE = False
+except ImportError:
+    # SYCL-only mode - no CUDA available
+    SYCL_ONLY_MODE = True
+    print("⚠️  CUDA _gpuUtils not available - using SYCL device management")
+
 import copy
 
 class GpuIds(object):
@@ -26,7 +35,13 @@ class GpuIds(object):
             self.name = ""
         else:
             self.name = nameGPU
-        self.devices = gpuUtils.getGpuIdList(self.name)
+            
+        if SYCL_ONLY_MODE:
+            # SYCL-only mode: simple device management
+            self.devices = [0]  # Default to first SYCL device
+        else:
+            # CUDA mode: use gpuUtils
+            self.devices = gpuUtils.getGpuIdList(self.name)
 
     def __len__(self):
         return len(self.devices)
@@ -44,12 +59,20 @@ class GpuIds(object):
 
 def getGpuNames():
     """Returns a list of all installed GPUs."""
-    return gpuUtils.getGpuNames()
+    if SYCL_ONLY_MODE:
+        # SYCL-only mode: return SYCL device info
+        return ["Intel Graphics (SYCL)"]
+    else:
+        # CUDA mode
+        return gpuUtils.getGpuNames()
 
 
 # def getGpuCount():
 #     """Returns the number of installed GPUs."""
-#     return gpuUtils.getGpuCount()
+#     if SYCL_ONLY_MODE:
+#         return 1
+#     else:
+#         return gpuUtils.getGpuCount()
 
 
 def getGpuIds(gpuName=None):  # noqa: N803

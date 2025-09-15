@@ -1,7 +1,17 @@
 import copy
 
 import numpy as np
-from _Atb import _Atb_ext
+
+# SYCL-only mode: Check if Atb extension is available, otherwise use backend
+try:
+    from _Atb import _Atb_ext
+    HAS_ATB_EXTENSION = True
+    USE_BACKEND = False
+except ImportError:
+    # SYCL-only mode - use backend implementation
+    HAS_ATB_EXTENSION = False
+    USE_BACKEND = True
+    print("⚠️  CUDA Atb extension not available - using SYCL backend")
 
 from .gpu import GpuIds
 
@@ -37,4 +47,9 @@ def Atb(projections, geo, angles, backprojection_type="FDK", **kwargs):
     if geo.nVoxel[0]< len(gpuids):
         gpuids.devices = list(gpuids.devices[0:geo.nVoxel[0]])
 
-    return _Atb_ext(projections, geox, geox.angles, backprojection_type, geox.mode, gpuids=gpuids)
+    # Use backend system for SYCL-only mode
+    if USE_BACKEND:
+        from .Atb_backend import Atb as Atb_backend
+        return Atb_backend(projections, geox, angles, backprojection_type, **kwargs)
+    else:
+        return _Atb_ext(projections, geox, geox.angles, backprojection_type, geox.mode, gpuids=gpuids)

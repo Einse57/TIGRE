@@ -88,7 +88,7 @@ pip install -e .
 
 ### Python API
 
-The SYCL backend integrates seamlessly with TIGRE's existing Python API:
+The SYCL backend integrates with TIGRE's existing Python API:
 
 ```python
 import tigre

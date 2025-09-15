@@ -1,5 +1,5 @@
 #include "device_backend_sycl.hpp"
-#include "siddon_projection_sycl.hpp"
+#include "siddon_projection_sycl_fixed.hpp"
 #include "fdk_backprojection_sycl.hpp"
 #include <stdexcept>
 #include <sstream>

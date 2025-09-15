@@ -1,5 +1,14 @@
 import numpy as np
-from _tv_proximal import tvdenoise
+
+# SYCL-only mode: Check if TV proximal extension is available
+try:
+    from _tv_proximal import tvdenoise
+    HAS_TV_PROXIMAL_EXTENSION = True
+except ImportError:
+    # SYCL-only mode - use fallback implementation
+    from .tv_stubs import tvdenoise
+    HAS_TV_PROXIMAL_EXTENSION = False
+    print("⚠️  CUDA tv_proximal extension not available - using fallback implementation")
 
 from .gpu import GpuIds
 

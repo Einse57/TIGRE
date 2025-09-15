@@ -10,7 +10,7 @@ except ImportError:
     print("CUDA extensions not available")
 
 try:
-    from _Atb_backend import _Atb_backend_ext
+    from _Atb_backend import Atb_backend as _Atb_backend_ext
     BACKEND_AVAILABLE = True
 except ImportError:
     BACKEND_AVAILABLE = False
@@ -105,10 +105,9 @@ def Atb(projections, geo, angles, backprojection_type="FDK", backend=None, devic
         if not BACKEND_AVAILABLE:
             raise RuntimeError(f"{backend} backend requested but backend abstraction not available")
         
-        # Use new backend abstraction
-        mode = kwargs.get("mode", "cone")  # For compatibility, not used by backend
-        return _Atb_backend_ext(projections, geox, geox.angles, backprojection_type, mode,
-                               backend=backend, device_index=device_index)
+        # Use new backend abstraction - pass original angles, not geox.angles  
+        return _Atb_backend_ext(projections, geox, angles, backprojection_type,
+                               device_index=device_index, backend=backend)
     
     else:
         raise ValueError(f"Unknown backend: {backend}. Supported: CUDA, SYCL, CPU")

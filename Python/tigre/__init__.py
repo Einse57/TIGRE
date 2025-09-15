@@ -21,8 +21,16 @@ import os
 from .utilities.geometry import geometry
 from .utilities.geometry_default import ConeGeometryDefault as geometry_default
 from .utilities.geometry_default import FanGeometryDefault as fan_geometry_default
-from .utilities.Ax import Ax
-from .utilities.Atb import Atb
+
+# Use backend versions for SYCL-only builds
+try:
+    from .utilities.Ax import Ax
+    from .utilities.Atb import Atb
+except ImportError:
+    # Fallback to backend versions for SYCL-only builds
+    from .utilities.Ax_backend import Ax
+    from .utilities.Atb_backend import Atb
+
 from .utilities.visualization.plotproj import plotproj, plotProj, plotSinogram
 from .utilities.visualization.plotimg import plotimg, plotImg
 from .utilities.visualization.plot_geometry import plot_geometry

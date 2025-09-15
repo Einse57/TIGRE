@@ -1,7 +1,17 @@
 import copy
 
 import numpy as np
-from _Ax import _Ax_ext
+
+# SYCL-only mode: Check if Ax extension is available, otherwise use backend
+try:
+    from _Ax import _Ax_ext
+    HAS_AX_EXTENSION = True
+    USE_BACKEND = False
+except ImportError:
+    # SYCL-only mode - use backend implementation
+    HAS_AX_EXTENSION = False
+    USE_BACKEND = True
+    print("WARNING: CUDA Ax extension not available - using SYCL backend")
 
 from .gpu import GpuIds
 
@@ -35,4 +45,9 @@ def Ax(img, geo, angles, projection_type="Siddon", **kwargs):
     if len(angles) < len(gpuids):
         gpuids.devices = list(gpuids.devices[0:len(angles)])
 
-    return _Ax_ext(img, geox, geox.angles, projection_type, geox.mode, gpuids=gpuids)
+    # Use backend system for SYCL-only mode
+    if USE_BACKEND:
+        from .Ax_backend import Ax as Ax_backend
+        return Ax_backend(img, geox, angles, projection_type, **kwargs)
+    else:
+        return _Ax_ext(img, geox, geox.angles, projection_type, geox.mode, gpuids=gpuids)

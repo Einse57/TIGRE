@@ -58,6 +58,8 @@ COMPUTE_CAPABILITY_ARGS = [
 
 def get_cuda_version(cuda_home):
     """Locate the CUDA version"""
+    if cuda_home is None:
+        return "0.0"  # Return a default version when CUDA not found
     version_file = os.path.join(cuda_home, "version.txt")
     try:
         if os.path.isfile(version_file):
@@ -105,21 +107,39 @@ def locate_cuda():
             if not os.path.exists(cuda_home):
                 cuda_home = None
     version = get_cuda_version(cuda_home)
-    cudaconfig = {
-        "home": cuda_home,
-        "include": pjoin(cuda_home, "include"),
-    }
-    if IS_WINDOWS:
-        cudaconfig["lib64"]= pjoin(cuda_home, pjoin("lib", "x64"))
+    
+    if cuda_home is None:
+        # No CUDA found - return empty config
+        cudaconfig = {
+            "home": None,
+            "include": "",
+        }
+        if IS_WINDOWS:
+            cudaconfig["lib64"] = ""
+        else:
+            cudaconfig["lib64"] = ""
     else:
-        lib64_path = pjoin(cuda_home, "lib64")
-        cudaconfig["lib64"] = lib64_path if os.path.exists(lib64_path) else pjoin(cuda_home, "lib")
+        cudaconfig = {
+            "home": cuda_home,
+            "include": pjoin(cuda_home, "include"),
+        }
+        if IS_WINDOWS:
+            cudaconfig["lib64"]= pjoin(cuda_home, pjoin("lib", "x64"))
+        else:
+            lib64_path = pjoin(cuda_home, "lib64")
+            cudaconfig["lib64"] = lib64_path if os.path.exists(lib64_path) else pjoin(cuda_home, "lib")
 
-    if not all([os.path.exists(v) for v in cudaconfig.values()]):
-        raise EnvironmentError(
-            "The CUDA  path could not be located in $PATH, $CUDA_HOME or $CUDA_PATH. "
-            "Either add it to your path, or set $CUDA_HOME or $CUDA_PATH."
-        )
+    if cuda_home is None or not all([v and os.path.exists(v) for v in cudaconfig.values() if v]):
+        # Allow SYCL-only builds without CUDA
+        if os.environ.get('TIGRE_BUILD_SYCL_ONLY') == '1':
+            print("⚠️ CUDA not found - building with SYCL backend only")
+            return {"home": None, "include": "", "lib64": ""}, "0.0"
+        else:
+            raise EnvironmentError(
+                "The CUDA path could not be located in $PATH, $CUDA_HOME or $CUDA_PATH. "
+                "Either add it to your path, or set $CUDA_HOME or $CUDA_PATH. "
+                "Alternatively, set TIGRE_BUILD_SYCL_ONLY=1 to build with SYCL only."
+            )
 
     return cudaconfig, version
 
@@ -604,11 +624,20 @@ RandomNumberGenerator_ext = Extension(
 )
 
 
+# Determine which extensions to build
+if os.environ.get('TIGRE_BUILD_SYCL_ONLY') == '1':
+    # SYCL-only build - only include SYCL backend extensions
+    ext_modules_list = backend_extensions
+    print("✅ SYCL-only build: Using only SYCL backend extensions")
+else:
+    # Regular build - include all extensions
+    ext_modules_list = [Ax_ext, Atb_ext, tv_proximal_ext, minTV_ext, AwminTV_ext, gpuUtils_ext, RandomNumberGenerator_ext] + backend_extensions
+
 setup(
     packages=find_packages(),
     include_package_data=True,
     data_files=[("data", ["Common/data/head.mat"])],
-    ext_modules=[Ax_ext, Atb_ext, tv_proximal_ext, minTV_ext, AwminTV_ext, gpuUtils_ext, RandomNumberGenerator_ext] + backend_extensions,
+    ext_modules=ext_modules_list,
     py_modules=["tigre.py"],
     cmdclass={"build_ext": BuildExtension},
     # since the package has c code, the egg cannot be zipped

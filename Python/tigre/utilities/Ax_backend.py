@@ -10,7 +10,7 @@ except ImportError:
     print("CUDA extensions not available")
 
 try:
-    from _Ax_backend import _Ax_backend_ext
+    from _Ax_backend import Ax_backend as _Ax_backend_ext
     BACKEND_AVAILABLE = True
 except ImportError:
     BACKEND_AVAILABLE = False
@@ -102,10 +102,9 @@ def Ax(img, geo, angles, projection_type="Siddon", backend=None, device_index=0,
         if not BACKEND_AVAILABLE:
             raise RuntimeError(f"{backend} backend requested but backend abstraction not available")
         
-        # Use new backend abstraction
-        mode = kwargs.get("mode", "cone")  # For compatibility, not used by backend
-        return _Ax_backend_ext(img, geox, geox.angles, projection_type, mode, 
-                              backend=backend, device_index=device_index)
+        # Use new backend abstraction - pass original angles, not geox.angles
+        return _Ax_backend_ext(img, geox, angles, projection_type,
+                              device_index=device_index, backend=backend)
     
     else:
         raise ValueError(f"Unknown backend: {backend}. Supported: CUDA, SYCL, CPU")
