@@ -59,11 +59,253 @@
 #include "tigre_sycl.hpp"
 #include <math.h>
 
+#define MAXTREADS 1024
+#define PROJ_PER_BLOCK 8
+#define PIXEL_SIZE_BLOCK 8
+/*GEOMETRY DEFINITION
+ *
+ *                Detector plane, behind
+ *            |-----------------------------|
+ *            |                             |
+ *            |                             |
+ *            |                             |
+ *            |                             |
+ *            |      +--------+             |
+ *            |     /        /|             |
+ *   A Z      |    /        / |*D           |
+ *   |        |   +--------+  |             |
+ *   |        |   |        |  |             |
+ *   |        |   |     *O |  +             |
+ *    --->y   |   |        | /              |
+ *  /         |   |        |/               |
+ * V X        |   +--------+                |
+ *            |-----------------------------|
+ *
+ *           *S
+ *
+ *
+ *
+ *
+ *
+ **/
+
+// Parameters of the PROJ_PER_BLOCK projections of one kernel call (constant memory in the CUDA code)
+struct ProjParamsParallelInterp { Point3D data[4*PROJ_PER_BLOCK]; float floats[2*PROJ_PER_BLOCK]; };
+
+static inline void kernelPixelDetector_parallel_interpolated(const Geometry& geo,
+        float* detector,
+        const int currProjSetNumber, const int totalNoOfProjections, const float* tex,
+        const Point3D* projParamsArrayDev, const float* projFloatsArrayDev, sycl::id<3> id)
+{
+//         Point3D source ,
+//         Point3D deltaU,
+//         Point3D deltaV,
+//         Point3D uvOrigin,
+//         float DSO,
+//         float maxdist){
+    
+    unsigned long long u = id[2];
+    unsigned long long v = id[1];
+    unsigned long long projNumber=id[0];
+    
+    if (u>= geo.nDetecU || v>= geo.nDetecV || projNumber>=PROJ_PER_BLOCK)
+        return;
+    
+    int indAlpha = currProjSetNumber*PROJ_PER_BLOCK+projNumber;  // This is the ABSOLUTE projection number in the projection array
+    
+    
+#if IS_FOR_MATLAB_TIGRE
+    size_t idx =  (size_t)(u  * (unsigned long long)geo.nDetecV + v)+ projNumber*(unsigned long long)geo.nDetecV *(unsigned long long)geo.nDetecU ;
+#else
+    size_t idx =  (size_t)(v  * (unsigned long long)geo.nDetecU + u)+ projNumber*(unsigned long long)geo.nDetecV *(unsigned long long)geo.nDetecU ;
+#endif
+    
+    if(indAlpha>=totalNoOfProjections)
+        return;
+    
+    Point3D uvOrigin = projParamsArrayDev[4*projNumber];  // 6*projNumber because we have 6 Point3D values per projection
+    Point3D deltaU = projParamsArrayDev[4*projNumber+1];
+    Point3D deltaV = projParamsArrayDev[4*projNumber+2];
+    Point3D source = projParamsArrayDev[4*projNumber+3];
+    
+    float DSO = projFloatsArrayDev[2*projNumber+0];
+    float maxdist = projFloatsArrayDev[2*projNumber+1];
+    
+    
+    /////// Get coordinates XYZ of pixel UV
+    unsigned long pixelV = geo.nDetecV-v-1;
+    unsigned long pixelU = u;
+    
+    
+    float vectX,vectY,vectZ;
+    Point3D P;
+    P.x=(uvOrigin.x+pixelU*deltaU.x+pixelV*deltaV.x);
+    P.y=(uvOrigin.y+pixelU*deltaU.y+pixelV*deltaV.y);
+    P.z=(uvOrigin.z+pixelU*deltaU.z+pixelV*deltaV.z);
+    Point3D S;
+    S.x=(source.x+pixelU*deltaU.x+pixelV*deltaV.x);
+    S.y=(source.y+pixelU*deltaU.y+pixelV*deltaV.y);
+    S.z=(source.z+pixelU*deltaU.z+pixelV*deltaV.z);
+    
+    // Length is the ray length in normalized space
+    float length=sycl::sqrt((S.x-P.x)*(S.x-P.x)+(S.y-P.y)*(S.y-P.y)+(S.z-P.z)*(S.z-P.z));
+    //now legth is an integer of Nsamples that are required on this line
+    length=sycl::ceil(length/geo.accuracy);//Divide the directional vector by an integer
+    vectX=(P.x -S.x)/(length);
+    vectY=(P.y -S.y)/(length);
+    vectZ=(P.z -S.z)/(length);
+    
+    
+//     //Integrate over the line
+    float tx,ty,tz;
+    float sum=0;
+    float i;
+    
+    
+    // limit the amount of mem access after the cube, but before the detector.
+    if ((2*DSO/geo.dVoxelX+maxdist)/geo.accuracy  <   length)
+        length=sycl::ceil((2*DSO/geo.dVoxelX+maxdist)/geo.accuracy);
+    //Length is not actually a length, but the amount of memreads with given accuracy ("samples per voxel")
+    
+    for (i=sycl::floor(maxdist/geo.accuracy); i<=length; i=i+1){
+        tx=vectX*i+S.x;
+        ty=vectY*i+S.y;
+        tz=vectZ*i+S.z;
+        
+        sum += tigreFetchLinear3D(tex, geo.nVoxelX, geo.nVoxelY, geo.nVoxelZ, tx+0.5f, ty+0.5f, tz+0.5f); // this line is 94% of time.
+        
+    }
+    float deltalength=sycl::sqrt((vectX*geo.dVoxelX)*(vectX*geo.dVoxelX)+
+            (vectY*geo.dVoxelY)*(vectY*geo.dVoxelY)+
+            (vectZ*geo.dVoxelZ)*(vectZ*geo.dVoxelZ) );
+    detector[idx]=sum*deltalength;
+}
 
 
-int interpolation_projection_parallel(float  *  img, Geometry geo, float** result,float const * const angles,int nangles, const GpuIds& gpuids){
-    mexErrMsgIdAndTxt("Ax:Interpolated_projection_parallel:SYCL","The interpolated projector is not in the SYCL build yet\n");
-    return 1;
+int interpolation_projection_parallel(float* img, Geometry geo, float** result,float const * const angles,int nangles, const GpuIds& gpuids){
+    // Prepare for MultiGPU
+    int deviceCount = gpuids.GetLength();
+    if (deviceCount == 0) {
+        mexErrMsgIdAndTxt("Ax:Interpolated_projection_parallel:GPUselect","There are no available SYCL device(s)\n");
+    }
+    if (!gpuids.AreEqualDevices()) {
+        mexWarnMsgIdAndTxt("Ax:Interpolated_projection_parallel:GPUselect","Detected one (or more) different GPUs.\n This code is not smart enough to separate the memory GPU wise if they have different computational times or memory limits.\n First GPU parameters used. If the code errors you might need to change the way GPU selection is performed.");
+    }
+    int dev;
+    try {
+        // Check the available device memory: same image split rule as the CUDA code.
+        size_t mem_GPU_global;
+        checkFreeMemory(gpuids, &mem_GPU_global);
+
+        size_t mem_image=                 (unsigned long long)geo.nVoxelX*(unsigned long long)geo.nVoxelY*(unsigned long long)geo.nVoxelZ*sizeof(float);
+        size_t mem_proj=                  (unsigned long long)geo.nDetecU*(unsigned long long)geo.nDetecV*sizeof(float);
+
+        // Does everything fit in the device?
+        const bool fits_in_memory = mem_image+2*PROJ_PER_BLOCK*mem_proj<mem_GPU_global;
+        unsigned int splits=1;
+        if (!fits_in_memory) {
+            // Nope nope.
+            // approx free memory we have. We already have left some extra 5% free for internal stuff
+            // we need a second projection memory to combine multi-GPU stuff.
+            size_t mem_free=mem_GPU_global-4*PROJ_PER_BLOCK*mem_proj;
+            splits=mem_image/mem_free+1;// Ceil of the truncation
+        }
+        Geometry* geoArray = (Geometry*)malloc(splits*sizeof(Geometry));
+        splitImageInterp(splits,geo,geoArray,nangles);
+
+        // Allocate the image (a slab of it if split) and one block of projections per device
+        size_t num_voxels_split = (size_t)geoArray[0].nVoxelX*(size_t)geoArray[0].nVoxelY*(size_t)geoArray[0].nVoxelZ;
+        size_t num_pixels_block = (size_t)PROJ_PER_BLOCK*(size_t)geo.nDetecU*(size_t)geo.nDetecV;
+        std::vector<float*> dImage(deviceCount), dProjection(deviceCount);
+        for (dev = 0; dev < deviceCount; dev++){
+            sycl::queue& q = tigreSyclQueue(gpuids[dev]);
+            dImage[dev] = sycl::malloc_device<float>(num_voxels_split, q);
+            dProjection[dev] = sycl::malloc_device<float>(num_pixels_block, q);
+            if (!dImage[dev] || !dProjection[dev])
+                mexErrMsgIdAndTxt("Ax:Interpolated_projection_parallel:malloc","Device memory allocation failed\n");
+        }
+        std::vector<float> partial(splits>1 ? num_pixels_block*deviceCount : 0);
+
+        // Split the angles between devices
+        int nangles_device=(nangles+deviceCount-1)/deviceCount;
+        unsigned int noOfKernelCalls = (nangles_device+PROJ_PER_BLOCK-1)/PROJ_PER_BLOCK;  // We'll take care of bounds checking inside the loop if nalpha is not divisible by PROJ_PER_BLOCK
+
+        ProjParamsParallelInterp params;
+        for (unsigned int sp=0;sp<splits;sp++){
+            // Load the image (or the slab of it) on every device
+            size_t linear_idx_start= (size_t)sp*(size_t)geoArray[0].nVoxelX*(size_t)geoArray[0].nVoxelY*(size_t)geoArray[0].nVoxelZ;
+            size_t num_voxels_curr = (size_t)geoArray[sp].nVoxelX*(size_t)geoArray[sp].nVoxelY*(size_t)geoArray[sp].nVoxelZ;
+            for (dev = 0; dev < deviceCount; dev++)
+                tigreSyclQueue(gpuids[dev]).memcpy(dImage[dev], &img[linear_idx_start], num_voxels_curr*sizeof(float));
+
+            const Geometry geoSplit = geoArray[sp];
+            for (unsigned int i=0; i<noOfKernelCalls; i++) {
+                std::vector<sycl::event> copies(deviceCount);
+                std::vector<int> projection_this_block(deviceCount, 0);
+                for (dev=0;dev<deviceCount;dev++){
+                    unsigned int proj_start=i*PROJ_PER_BLOCK+dev*nangles_device;
+                    if (proj_start>=nangles || i*PROJ_PER_BLOCK>=nangles_device)
+                        continue;
+                    projection_this_block[dev]=std::min(std::min(PROJ_PER_BLOCK, nangles_device-(int)(i*PROJ_PER_BLOCK)), nangles-(int)proj_start);
+                    for(unsigned int j=0; j<PROJ_PER_BLOCK; j++){
+                        unsigned int proj_global=(i*PROJ_PER_BLOCK+j)+dev*nangles_device;
+                        if (proj_global>=nangles)
+                            break;
+                        if ((i*PROJ_PER_BLOCK+j)>=nangles_device)
+                            break;
+                        geoArray[sp].alpha=angles[proj_global*3];
+                        geoArray[sp].theta=angles[proj_global*3+1];
+                        geoArray[sp].psi  =angles[proj_global*3+2];
+                        //precomute distances for faster execution
+                        float maxdist=maxdistanceCuboid(geoArray[sp],proj_global);
+                        //Precompute per angle constant stuff for speed
+                        Point3D source, deltaU, deltaV, uvOrigin;
+                        computeDeltas_parallel(geoArray[sp],geoArray[sp].alpha,proj_global, &uvOrigin, &deltaU, &deltaV, &source);
+                        params.data[4*j]=uvOrigin;   // 6*j because we have 6 Point3D values per projection
+                        params.data[4*j+1]=deltaU;
+                        params.data[4*j+2]=deltaV;
+                        params.data[4*j+3]=source;
+                        params.floats[2*j]=geo.DSO[proj_global];
+                        params.floats[2*j+1]=floor(maxdist);
+                    }
+                    sycl::queue& q = tigreSyclQueue(gpuids[dev]);
+                    float* detector = dProjection[dev];
+                    const float* tex = dImage[dev];
+                    const ProjParamsParallelInterp p = params;
+                    const int nangles_dev = nangles_device;
+                    q.parallel_for(sycl::range<3>(PROJ_PER_BLOCK, geo.nDetecV, geo.nDetecU), [=](sycl::id<3> id){
+                        kernelPixelDetector_parallel_interpolated(geoSplit, detector, i, nangles_dev, tex, p.data, p.floats, id);
+                    });
+                    float* dst = (sp==0) ? result[proj_start] : &partial[dev*num_pixels_block];
+                    copies[dev] = q.memcpy(dst, detector, (size_t)projection_this_block[dev]*geo.nDetecV*geo.nDetecU*sizeof(float));
+                }
+                for (dev=0;dev<deviceCount;dev++){
+                    if (!projection_this_block[dev])
+                        continue;
+                    copies[dev].wait_and_throw();
+                    if (sp>0){
+                        // Add the contribution of this slab of the image
+                        unsigned int proj_start=i*PROJ_PER_BLOCK+dev*nangles_device;
+                        float* acc = result[proj_start];
+                        const float* add = &partial[dev*num_pixels_block];
+                        size_t n = (size_t)projection_this_block[dev]*geo.nDetecV*geo.nDetecU;
+                        for (size_t e=0; e<n; e++)
+                            acc[e]+=add[e];
+                    }
+                }
+            }
+        }
+        for (dev = 0; dev < deviceCount; dev++){
+            sycl::queue& q = tigreSyclQueue(gpuids[dev]);
+            q.wait_and_throw();
+            sycl::free(dImage[dev], q);
+            sycl::free(dProjection[dev], q);
+        }
+        freeGeoArray(splits,geoArray);
+    } catch (const sycl::exception& e) {
+        mexErrMsgIdAndTxt("Ax:Interpolated_projection_parallel:SYCL", e.what());
+    }
+    return 0;
 }
 
 void computeDeltas_parallel(Geometry geo, float alpha,unsigned int i, Point3D* uvorigin, Point3D* deltaU, Point3D* deltaV, Point3D* source){
