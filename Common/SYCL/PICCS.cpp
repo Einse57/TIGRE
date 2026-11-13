@@ -58,6 +58,10 @@ Codes  : https://github.com/CERN/TIGRE
 #include "PICCS.hpp"
 #include "tigre_sycl.hpp"
 
+// The kernels of each TIGRE module share one SYCL runtime in a Python process, and the
+// runtime finds kernels by name. A named namespace keeps these kernel names distinct
+// from the identically named helpers of the other TV modules.
+namespace tigre_piccs {
 // SYCL kernels
     static inline
             void gradient(const float* u, float* grad,
@@ -140,6 +144,9 @@ Codes  : https://github.com/CERN/TIGRE
         });
     }
     
+}  // namespace tigre_piccs
+using namespace tigre_piccs;
+
 // main function
  void piccs_tv(const float* img,const float* prior, float* dst,float alpha,float ratio, const long* image_size, int maxIter, const GpuIds& gpuids){
     try {

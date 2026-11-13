@@ -62,6 +62,10 @@
 #include "gpuUtils.hpp"
 #include "tigre_sycl.hpp"
 
+// The kernels of each TIGRE module share one SYCL runtime in a Python process, and the
+// runtime finds kernels by name. A named namespace keeps these kernel names distinct
+// from the identically named helpers of the other TV modules.
+namespace tigre_gd_tv {
 // SYCL kernels
     static inline void gradient(const float* u, float* grad,
             long z, long y, long x,
@@ -139,6 +143,9 @@
             });
         });
     }
+
+}  // namespace tigre_gd_tv
+using namespace tigre_gd_tv;
 
 // main function
     void pocs_tv(float* img,float* dst,float alpha,const long* image_size, int maxIter, const GpuIds& gpuids){

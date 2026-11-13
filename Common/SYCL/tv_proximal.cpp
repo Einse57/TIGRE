@@ -67,6 +67,10 @@ void cpy_from_host(float* device_array,float* host_array,
                    sycl::queue* stream, bool is_first_chunk, bool is_last_chunk,const long* image_size);  
     
     
+// The kernels of each TIGRE module share one SYCL runtime in a Python process, and the
+// runtime finds kernels by name. A named namespace keeps these kernel names distinct
+// from the identically named helpers of the other TV modules.
+namespace tigre_tv_proximal {
     static void multiplyArrayScalar(sycl::queue& q, float* vec, float scalar, const size_t n){
         q.parallel_for(sycl::range<1>(n), [=](sycl::id<1> i){ vec[i]*=scalar; });
     }
@@ -189,6 +193,9 @@ void cpy_from_host(float* device_array,float* host_array,
     }
     
     
+}  // namespace tigre_tv_proximal
+using namespace tigre_tv_proximal;
+
 // Main function
     void tvdenoising(float* src, float* dst, float lambda,
             const float* spacing, const long* image_size, int maxIter, const GpuIds& gpuids) {
