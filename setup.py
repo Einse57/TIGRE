@@ -41,8 +41,13 @@ USE_SYCL = os.environ.get("TIGRE_SYCL", "").strip().lower() not in (
 )
 SYCL_CXX = os.environ.get("TIGRE_SYCL_CXX", "icx" if IS_WINDOWS else "icpx")
 # -fp-model=precise keeps IEEE inf/NaN handling, which the ray tracing relies on.
-SYCL_COMPILE_FLAGS = ["-fsycl", "-fp-model=precise", "-std=c++17", "-O2"]
-SYCL_LINK_FLAGS = ["-fsycl"]
+if IS_WINDOWS:
+    # icx on Windows takes MSVC-style options.
+    SYCL_COMPILE_FLAGS = ["-fsycl", "/fp:precise", "/std:c++17", "/EHsc"]
+    SYCL_LINK_FLAGS = []
+else:
+    SYCL_COMPILE_FLAGS = ["-fsycl", "-fp-model=precise", "-std=c++17", "-O2"]
+    SYCL_LINK_FLAGS = ["-fsycl"]
 
 
 # Code from https://github.com/pytorch/pytorch/blob/master/torch/utils/cpp_extension.py
@@ -207,9 +212,41 @@ class BuildExtension(build_ext):
         build_ext.__init__(self, *args, **kwargs)
         self.no_python_abi_suffix = kwargs.get("no_python_abi_suffix", False)
 
+    def _use_sycl_msvc(self):
+        """Compile with icx instead of cl.exe and link through icx -fsycl, which
+        adds the SYCL device images and runtime library before calling link.exe."""
+        compiler = self.compiler
+        if not compiler.initialized:
+            compiler.initialize()
+        compiler.cc = SYCL_CXX
+        # Link-time code generation is a cl.exe/link.exe feature that icx does not use.
+        compiler.compile_options = [o for o in compiler.compile_options if o != "/GL"]
+
+        def link(target_desc, objects, output_filename, output_dir=None, libraries=None,
+                 library_dirs=None, runtime_library_dirs=None, export_symbols=None,
+                 debug=False, extra_preargs=None, extra_postargs=None, build_temp=None,
+                 target_lang=None):
+            objects, output_dir = compiler._fix_object_args(objects, output_dir)
+            libraries, library_dirs, _ = compiler._fix_lib_args(libraries, library_dirs, runtime_library_dirs)
+            if output_dir is not None:
+                output_filename = os.path.join(output_dir, output_filename)
+            os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
+            link_opts = ["/LIBPATH:" + d for d in library_dirs]
+            link_opts += [lib if lib.endswith(".lib") else lib + ".lib" for lib in libraries]
+            link_opts += ["/EXPORT:" + sym for sym in (export_symbols or [])]
+            cmd = [SYCL_CXX, "-fsycl", "/nologo", "/LD", "/MD"] + list(extra_preargs or [])
+            cmd += objects + ["/Fe:" + output_filename] + list(extra_postargs or [])
+            compiler.spawn(cmd + ["/link"] + link_opts)
+
+        compiler.link = link
+
     def build_extensions(self):
         if USE_SYCL:
             # Compile and link everything with the DPC++ compiler.
+            if self.compiler.compiler_type == "msvc":
+                self._use_sycl_msvc()
+                build_ext.build_extensions(self)
+                return
             for name in ("compiler_so", "compiler_cxx", "linker_so"):
                 command = getattr(self.compiler, name, None)
                 if command:
