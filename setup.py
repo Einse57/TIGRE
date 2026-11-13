@@ -28,6 +28,22 @@ if no_pinned:
 
 IS_WINDOWS = sys.platform == "win32"
 
+# Build the SYCL (oneAPI) backend in Common/SYCL instead of the CUDA one. Set
+# the TIGRE_SYCL environment variable and have the oneAPI DPC++ compiler on the
+# PATH (icpx, or icx on Windows; override with TIGRE_SYCL_CXX). CUDA is not
+# needed for this build.
+USE_SYCL = os.environ.get("TIGRE_SYCL", "").strip().lower() not in (
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+)
+SYCL_CXX = os.environ.get("TIGRE_SYCL_CXX", "icx" if IS_WINDOWS else "icpx")
+# -fp-model=precise keeps IEEE inf/NaN handling, which the ray tracing relies on.
+SYCL_COMPILE_FLAGS = ["-fsycl", "-fp-model=precise", "-std=c++17", "-O2"]
+SYCL_LINK_FLAGS = ["-fsycl"]
+
 
 # Code from https://github.com/pytorch/pytorch/blob/master/torch/utils/cpp_extension.py
 
@@ -118,19 +134,22 @@ def _is_cuda_file(path):
     return os.path.splitext(path)[1] in [".cu", ".cuh"]
 
 
-CUDA, CUDA_VERSION = locate_cuda()
+if USE_SYCL:
+    CUDA = {"home": None, "include": "", "lib64": ""}
+else:
+    CUDA, CUDA_VERSION = locate_cuda()
 
-cuda_version = 11.0
-try:
-    cuda_version = float(CUDA_VERSION)
-except ValueError:
-    cuda_list = re.findall(r'\d+', CUDA_VERSION)
-    cuda_version = float( str(cuda_list[0] + '.' + cuda_list[1]))
+    cuda_version = 11.0
+    try:
+        cuda_version = float(CUDA_VERSION)
+    except ValueError:
+        cuda_list = re.findall(r'\d+', CUDA_VERSION)
+        cuda_version = float( str(cuda_list[0] + '.' + cuda_list[1]))
 
-# Insert CUDA CC arguments
-for item in get_cuda_cc(CUDA["home"]):
-    str_arg = f"-gencode=arch=compute_{item},code=sm_{item}"
-    COMPUTE_CAPABILITY_ARGS.insert(0, str_arg)
+    # Insert CUDA CC arguments
+    for item in get_cuda_cc(CUDA["home"]):
+        str_arg = f"-gencode=arch=compute_{item},code=sm_{item}"
+        COMPUTE_CAPABILITY_ARGS.insert(0, str_arg)
 
 
 # Obtain the numpy include directory.  This logic works across numpy versions.
@@ -189,6 +208,14 @@ class BuildExtension(build_ext):
         self.no_python_abi_suffix = kwargs.get("no_python_abi_suffix", False)
 
     def build_extensions(self):
+        if USE_SYCL:
+            # Compile and link everything with the DPC++ compiler.
+            for name in ("compiler_so", "compiler_cxx", "linker_so"):
+                command = getattr(self.compiler, name, None)
+                if command:
+                    self.compiler.set_executable(name, [SYCL_CXX] + list(command[1:]))
+            build_ext.build_extensions(self)
+            return
         # Register .cu and .cuh as valid source extensions.
         self.compiler.src_extensions += [".cu", ".cuh"]
         # Save the original _compile method for later.
@@ -522,13 +549,47 @@ RandomNumberGenerator_ext = Extension(
     include_dirs=[NUMPY_INCLUDE, CUDA["include"], "Common/CUDA/"],
 )
 
+
+def _sycl_extension(ext):
+    """Point an extension at the SYCL sources in Common/SYCL."""
+    sources = []
+    for source in ext.sources:
+        name, extension = os.path.splitext(source)
+        if source.startswith("Common/CUDA/") and (
+            extension == ".cu" or source.endswith("GpuIds.cpp")
+        ):
+            source = "Common/SYCL/" + os.path.basename(name) + ".cpp"
+        sources.append(source)
+    ext.sources = sources + ["Common/SYCL/tigre_sycl.cpp"]
+    ext.library_dirs = []
+    ext.libraries = []
+    ext.runtime_library_dirs = []
+    ext.include_dirs = [NUMPY_INCLUDE, "Common/SYCL/", "Common/CUDA/"]
+    ext.extra_compile_args = SYCL_COMPILE_FLAGS
+    ext.extra_link_args = SYCL_LINK_FLAGS
+    return ext
+
+
+ext_modules = [
+    minPICCS_ext,
+    Ax_ext,
+    Atb_ext,
+    tv_proximal_ext,
+    minTV_ext,
+    AwminTV_ext,
+    gpuUtils_ext,
+    RandomNumberGenerator_ext,
+]
+if USE_SYCL:
+    ext_modules = [_sycl_extension(ext) for ext in ext_modules]
+
 print(find_packages())
 
 setup(
     packages=find_packages(),
     include_package_data=True,
     data_files=[("data", ["Common/data/head.mat"])],
-    ext_modules=[minPICCS_ext, Ax_ext, Atb_ext, tv_proximal_ext, minTV_ext, AwminTV_ext, gpuUtils_ext, RandomNumberGenerator_ext],
+    ext_modules=ext_modules,
     py_modules=["tigre.py"],
     cmdclass={"build_ext": BuildExtension},
     # since the package has c code, the egg cannot be zipped
