@@ -164,3 +164,33 @@ TIGRE_NO_PINNED_MEMORY=1 pip install --no-cache-dir git+https://github.com/CERN/
 `--no-cache-dir` stops pip from reusing a wheel it built earlier with pinned
 memory. The same works with `pip install .` from a clone. The prebuilt wheels
 always use pinned memory.
+
+## SYCL build (Intel oneAPI)
+
+TIGRE can also be compiled with SYCL instead of CUDA, using the Intel oneAPI
+DPC++/C++ compiler. This build needs no CUDA toolkit and runs on the devices
+your SYCL runtime exposes.
+
+Requirements:
+
+- Python 3.11–3.14, numpy and Cython
+- The oneAPI DPC++/C++ compiler (`icpx` on Linux, `icx` on Windows) on the `PATH`
+- A SYCL runtime for your device (for a CPU, the Intel OpenCL CPU runtime)
+
+From a local clone:
+
+```sh
+TIGRE_SYCL=1 pip install --no-build-isolation --no-cache-dir .
+```
+
+`TIGRE_SYCL_CXX` selects a different SYCL compiler.
+
+TIGRE lists the Level Zero GPUs if there are any, otherwise the other GPUs,
+otherwise the remaining SYCL devices (such as the CPU). `gpuids` index into that
+list, and `ONEAPI_DEVICE_SELECTOR` filters it as usual. All projectors,
+backprojectors, TV/PICCS regularisers and `CTnoise.add` are available.
+`CTnoise.add` uses a different random number generator than the CUDA build, so
+its values differ for the same input.
+
+Tested on an Intel Xeon processor with the Intel OpenCL CPU runtime
+(oneAPI 2025.2, Linux).
