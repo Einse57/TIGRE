@@ -24,6 +24,9 @@
 #include <cstddef>
 
 //! @brief SYCL devices TIGRE runs on, in device-id order.
+//! GPUs are listed if there are any (Level Zero preferred over OpenCL, so a
+//! GPU is not listed twice); otherwise every other device (e.g. the OpenCL
+//! CPU device). The usual ONEAPI_DEVICE_SELECTOR filter applies.
 const std::vector<sycl::device>& tigreSyclDevices();
 
 //! @brief In-order queue for device id iDeviceId (an index of tigreSyclDevices()).

@@ -20,8 +20,22 @@
 #include <algorithm>
 
 static std::vector<sycl::device> enumerateDevices(){
-    // The default SYCL device only (ONEAPI_DEVICE_SELECTOR applies).
-    return std::vector<sycl::device>(1, sycl::device(sycl::default_selector_v));
+    std::vector<sycl::device> l0Gpus, otherGpus, others;
+    for (const auto& platform : sycl::platform::get_platforms()){
+        for (const auto& device : platform.get_devices()){
+            if (device.is_gpu()){
+                if (platform.get_backend()==sycl::backend::ext_oneapi_level_zero)
+                    l0Gpus.push_back(device);
+                else
+                    otherGpus.push_back(device);
+            } else {
+                others.push_back(device);
+            }
+        }
+    }
+    if (!l0Gpus.empty())    return l0Gpus;
+    if (!otherGpus.empty()) return otherGpus;
+    return others;
 }
 
 const std::vector<sycl::device>& tigreSyclDevices(){
