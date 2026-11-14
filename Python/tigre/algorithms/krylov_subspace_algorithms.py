@@ -63,7 +63,9 @@ def _forward_difference_adjoint(y, axis):
 
 def _tv_weights(x):
     """Half-quadratic TV weights (|grad x|^2 + 1e-6)^(-1/4), as MATLAB build_weights."""
-    g = sum(_forward_difference(x, ax) ** 2 for ax in range(3))
+    g = _forward_difference(x, 0) ** 2
+    for ax in (1, 2):
+        g += _forward_difference(x, ax) ** 2
     return (g + 1e-6) ** np.float32(-1 / 4)
 
 
