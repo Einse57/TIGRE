@@ -1,0 +1,95 @@
+name: SYCL tests
+
+on:
+  push:
+    branches: [sycl-on-3.2.0]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sycl-tests:
+    name: SYCL tests (CPU device, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            compiler: dpcpp_linux-64=2025.2
+            icd: ocl-icd
+          - os: windows-latest
+            compiler: dpcpp_win-64=2025.2
+            icd: khronos-opencl-icd-loader
+    # The oneAPI DPC++ compiler and the Intel OpenCL CPU runtime come from conda-forge.
+    # GitHub-hosted runners have no GPU, so TIGRE runs on the SYCL CPU device and the
+    # tests marked `gpu` run against it.
+    env:
+      MPLBACKEND: Agg
+      TIGRE_SYCL: 1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mamba-org/setup-micromamba@v3.2.1
+        id: mamba
+        with:
+          environment-name: tigre-sycl
+          create-args: >-
+            python=3.12
+            ${{ matrix.compiler }}
+            intel-opencl-rt=2025.2
+            ${{ matrix.icd }}
+            "numpy<2.5.1"
+            cython
+            setuptools
+            wheel
+            scipy
+            matplotlib-base
+            h5py
+            tqdm
+            pytest
+          cache-environment: true
+          cache-downloads: true
+
+      - name: Set up the environment (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          env_path="${{ steps.mamba.outputs.environment-path }}"
+          echo "$env_path/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$env_path/lib" >> "$GITHUB_ENV"
+          ls "$env_path/etc/OpenCL/vendors"
+
+      - uses: ilammy/msvc-dev-cmd@v1.13.0
+        if: runner.os == 'Windows'
+      - name: Set up the environment (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env_path = "${{ steps.mamba.outputs.environment-path }}"
+          "$env_path`n$env_path\Scripts`n$env_path\Library\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          "LIB=$env_path\Library\lib;$env:LIB" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "INCLUDE=$env_path\Library\include;$env:INCLUDE" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "DISTUTILS_USE_SDK=1" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "MSSdk=1" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          # Register the Intel OpenCL CPU runtime with the OpenCL ICD loader.
+          $icd = "$env_path\Library\bin\intel-ocl-cpu\intelocl64.dll"
+          if (-not (Test-Path $icd)) { Get-ChildItem -Recurse "$env_path\Library\bin" -Filter "intelocl*.dll" | Select-Object FullName; throw "OpenCL CPU runtime not found" }
+          New-Item -Force -Path "HKLM:\SOFTWARE\Khronos\OpenCL\Vendors" | Out-Null
+          New-ItemProperty -Force -Path "HKLM:\SOFTWARE\Khronos\OpenCL\Vendors" -Name $icd -Value 0 -PropertyType DWord | Out-Null
+          "OCL_ICD_FILENAMES=$icd" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          # Python resolves extension-module dependencies from its own folder before Library\bin,
+          # so place the ICD loader next to python.exe in case another OpenCL.dll is on the system.
+          Copy-Item "$env_path\Library\bin\OpenCL.dll" "$env_path\OpenCL.dll"
+          # conda-forge's umf.dll imports libhwloc-15.dll; some hwloc builds ship it as hwloc-15.dll.
+          if ((Test-Path "$env_path\Library\bin\hwloc-15.dll") -and -not (Test-Path "$env_path\Library\bin\libhwloc-15.dll")) {
+            Copy-Item "$env_path\Library\bin\hwloc-15.dll" "$env_path\Library\bin\libhwloc-15.dll"
+          }
+
+      - name: List SYCL devices
+        run: sycl-ls
+      - name: Build and install TIGRE
+        run: python -m pip install --no-build-isolation --no-deps -v .
+      - name: Check the SYCL CPU device is visible to TIGRE
+        run: python -c "from tigre.utilities.gpu import getGpuNames; n = getGpuNames(); print(n); assert n"
+      - name: Run tests
+        run: python -m pytest -ra
