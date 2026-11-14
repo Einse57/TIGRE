@@ -7,6 +7,10 @@ thank you.
 
 ## Unreleased
 
+### Added
+- SYCL build (`TIGRE_SYCL=1`) of all projectors, backprojectors, TV/PICCS regularisers
+  and noise generation, compiled with the oneAPI DPC++ compiler instead of CUDA.
+
 ### Changed
 - Wheels are built for Python 3.11 to 3.14 (3.14 was missing from 3.2.0), on
   `manylinux_2_28`: they need glibc 2.28 or newer (e.g. RHEL/AlmaLinux 8, Ubuntu 18.10+);
