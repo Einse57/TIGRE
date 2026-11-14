@@ -1,5 +1,6 @@
 from __future__ import division
 import os
+import sys
 import numpy as np
 import scipy.io
 import scipy.ndimage
@@ -12,7 +13,8 @@ def load_head_phantom(number_of_voxels=None):
         "../../../Common/data/head.mat", # Local
         "../../data/head.mat",   # setup.py
         "../../../../data/head.mat",  # pip 
-        "../data/head.mat" 
+        "../data/head.mat",
+        os.path.join(sys.prefix, "data", "head.mat"),  # data_files (pip, Linux layout)
     ]
     found = False
     for relative_path in list_relative_path:
