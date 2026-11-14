@@ -247,7 +247,8 @@ class BuildExtension(build_ext):
                 self._use_sycl_msvc()
                 build_ext.build_extensions(self)
                 return
-            for name in ("compiler_so", "compiler_cxx", "linker_so"):
+            # compiler_so_cxx and linker_so_cxx are used for C++ sources by newer setuptools.
+            for name in ("compiler_so", "compiler_so_cxx", "compiler_cxx", "linker_so", "linker_so_cxx"):
                 command = getattr(self.compiler, name, None)
                 if command:
                     self.compiler.set_executable(name, [SYCL_CXX] + list(command[1:]))
