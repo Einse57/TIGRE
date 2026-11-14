@@ -183,7 +183,9 @@ From a local clone:
 TIGRE_SYCL=1 pip install --no-build-isolation --no-cache-dir .
 ```
 
-`TIGRE_SYCL_CXX` selects a different SYCL compiler.
+`TIGRE_SYCL_CXX` selects a different SYCL compiler. On Windows, run
+`set TIGRE_SYCL=1` and then the `pip` command from an x64 Visual Studio developer
+prompt in which `icx` and its libraries are on `PATH` and `LIB`.
 
 TIGRE lists the Level Zero GPUs if there are any, otherwise the other GPUs,
 otherwise the remaining SYCL devices (such as the CPU). `gpuids` index into that
@@ -193,4 +195,6 @@ backprojectors, TV/PICCS regularisers and `CTnoise.add` are available.
 its values differ for the same input.
 
 Tested on an Intel Xeon processor with the Intel OpenCL CPU runtime
-(oneAPI 2025.2, Linux).
+(oneAPI 2025.2, Linux), and on an Intel Arc 140T GPU through Level Zero and an
+Intel Core Ultra 9 285H with the Intel OpenCL CPU runtime (oneAPI 2025.2,
+Windows 11).
