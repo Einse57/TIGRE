@@ -38,7 +38,7 @@ jobs:
             ${{ matrix.compiler }}
             intel-opencl-rt=2025.2
             ${{ matrix.icd }}
-            "numpy<2.5.1"
+            numpy<2.5.1
             cython
             setuptools
             wheel
