@@ -2,8 +2,7 @@
 
 Upstream TIGRE runs only on NVIDIA GPUs through CUDA and has no CPU fallback. With the SYCL
 backend in this branch, the same Python code runs on a laptop's Intel integrated GPU and on its CPU
-(through the Intel OpenCL CPU runtime), and on Intel discrete GPUs through Level Zero. The
-measurements below were made on one laptop; no discrete GPU was measured.
+(through the Intel OpenCL CPU runtime). The measurements below were made on one laptop.
 
 **Hardware and software:** Intel Core Ultra 9 285H (Intel OpenCL CPU runtime 2025.2.0, driver 2025.20.6.0.04), Intel Arc
 140T integrated GPU (Level Zero 1.17.39500+2, GPU driver 32.0.101.9033), 64 GB RAM, Windows 11 Pro
