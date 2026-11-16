@@ -2,7 +2,7 @@
 
 ## Overview
 
-TIGRE's SYCL backend provides high-performance computed tomography reconstruction using Intel GPU acceleration through the Intel oneAPI SYCL programming model. This enables significant speedups for CT reconstruction algorithms on Intel integrated and discrete graphics hardware.
+TIGRE's SYCL backend provides high-performance computed tomography reconstruction using Intel GPU acceleration through the Intel oneAPI SYCL programming model. This enables CT reconstruction algorithms to run on Intel integrated graphics and CPUs.
 
 ## 🚀 Quick Start
 
@@ -163,15 +163,9 @@ os.environ['SYCL_DEVICE_FILTER'] = 'level_zero:gpu'
 
 ## ⚡ Performance Expectations
 
-### Typical Speedups (vs CPU)
+### Measurements
 
-| Operation | Dataset Size | Intel GPU | Speedup |
-|-----------|--------------|-----------|---------|
-| Forward Projection | 256³ phantom, 180 projections | Iris Xe | 3-5x |
-| FDK Reconstruction | 512² detector, 180 projections | Iris Xe | 4-7x |
-| CGLS (10 iterations) | 256³ volume | Iris Xe | 2-4x |
-
-*Performance varies by hardware, dataset size, and system configuration.*
+Measured timings and parity checks on an Intel Core Ultra 9 285H (Arc 140T integrated GPU and CPU) are in [notes/MEASUREMENTS.md](https://github.com/Einse57/TIGRE/blob/sycl-on-3.2.0/notes/MEASUREMENTS.md) on the `sycl-on-3.2.0` branch.
 
 ### Memory Requirements
 
@@ -278,7 +272,7 @@ def process_scan_batch(scan_files, output_dir):
         np.save(output_file, recon)
 ```
 
-## 📊 Benchmarking
+## 📊 Comparing Backends
 
 ### Performance Comparison Script
 
@@ -286,7 +280,7 @@ def process_scan_batch(scan_files, output_dir):
 import time
 import numpy as np
 
-def benchmark_backends(phantom, geo, angles):
+def compare_backends(phantom, geo, angles):
     """Compare CPU vs SYCL performance"""
     results = {}
     
