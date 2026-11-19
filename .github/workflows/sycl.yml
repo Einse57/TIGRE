@@ -27,6 +27,9 @@ jobs:
     env:
       MPLBACKEND: Agg
       TIGRE_SYCL: 1
+      # test_ax_repeatable.py repeats each call 2000 times by default, which takes
+      # long on the CPU device; 50 still catches calls that are not repeatable.
+      TIGRE_REPEAT_CALLS: 50
     steps:
       - uses: actions/checkout@v7
       - uses: mamba-org/setup-micromamba@v3.2.1
