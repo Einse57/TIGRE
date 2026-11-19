@@ -60,6 +60,7 @@
 #include <sycl/sycl.hpp>
 #include "tv_proximal.hpp"
 #include "tigre_sycl.hpp"
+#include "tigre_release_on_error.hpp"
 
 void cpy_from_host(float* device_array,float* host_array, 
                    unsigned long long bytes_device,unsigned long long offset_device,unsigned long long offset_host, 
@@ -287,6 +288,10 @@ using namespace tigre_tv_proximal;
         
         
             // Lets allocate auxiliary  variables.
+            // onError releases what the call holds if it is left by an error (see
+            // tigre_release_on_error.hpp), as in the CUDA build (#870).
+            tigre::ReleaseOnError onError;
+            for (int d = 0; d < deviceCount; d++) onError.addQueue(&tigreSyclQueue(gpuids[d]));
             float* buffer_u, *buffer_px, *buffer_py, *buffer_pz;
             float* h_px, *h_py, *h_pz, *h_u;
             if(splits>1){
@@ -296,41 +301,58 @@ using namespace tigre_tv_proximal;
                     mexWarnMsgIdAndTxt("tvDenoise:tvdenoising:Memory","TV denoising requires 5 times the image memory. Your GPU(s) do not have the required memory.\n This memory will be attempted to allocate on the CPU, which may fail or slow the computation by a very significant amount.\n If you want to kill the execution: CTRL+C");
                 
                     h_px=(float*)malloc(image_size[0]*image_size[1]*image_size[2]*sizeof(float));
+                    onError.add([p=h_px]{ free(p); });
                 
                     h_py=(float*)malloc(image_size[0]*image_size[1]*image_size[2]*sizeof(float));
+                    onError.add([p=h_py]{ free(p); });
                 
                     h_pz=(float*)malloc(image_size[0]*image_size[1]*image_size[2]*sizeof(float));
+                    onError.add([p=h_pz]{ free(p); });
                 }
                 h_u=dst;
             }else{
                 buffer_u=(float*)malloc(  pixels_per_slice*sizeof(float));
+                onError.add([p=buffer_u]{ free(p); });
                 buffer_px=(float*)malloc( pixels_per_slice*sizeof(float));
+                onError.add([p=buffer_px]{ free(p); });
                 buffer_py=(float*)malloc( pixels_per_slice*sizeof(float));
+                onError.add([p=buffer_py]{ free(p); });
                 buffer_pz=(float*)malloc( pixels_per_slice*sizeof(float));
+                onError.add([p=buffer_pz]{ free(p); });
             
             }
             // We should be good to go memory wise.
         
         
             float** d_src   =(float**)malloc(deviceCount*sizeof(float*));
+            onError.add([p=d_src]{ free(p); });
             float** d_u     =(float**)malloc(deviceCount*sizeof(float*));
+            onError.add([p=d_u]{ free(p); });
             float** d_px    =(float**)malloc(deviceCount*sizeof(float*));
+            onError.add([p=d_px]{ free(p); });
             float** d_py    =(float**)malloc(deviceCount*sizeof(float*));
+            onError.add([p=d_py]{ free(p); });
             float** d_pz    =(float**)malloc(deviceCount*sizeof(float*));
+            onError.add([p=d_pz]{ free(p); });
         
             //Malloc
             for(dev=0;dev<deviceCount;dev++){
                 q=&tigreSyclQueue(gpuids[dev]);
                 // F
-                d_src[dev]=(float*)sycl::malloc_device(mem_img_each_GPU,*q);
+                d_src[dev]=(float*)tigre::deviceMallocBytes(mem_img_each_GPU, gpuids[dev], "tvDenoise:tvdenoising:GPU", "Total variation denoising (tvdenoise)");
+                onError.add([p=d_src[dev], q]{ sycl::free(p, *q); });
                 // U
-                d_u [dev]=(float*)sycl::malloc_device(mem_img_each_GPU,*q);
+                d_u [dev]=(float*)tigre::deviceMallocBytes(mem_img_each_GPU, gpuids[dev], "tvDenoise:tvdenoising:GPU", "Total variation denoising (tvdenoise)");
+                onError.add([p=d_u [dev], q]{ sycl::free(p, *q); });
                 // PX
-                d_px[dev]=(float*)sycl::malloc_device(mem_img_each_GPU,*q);
+                d_px[dev]=(float*)tigre::deviceMallocBytes(mem_img_each_GPU, gpuids[dev], "tvDenoise:tvdenoising:GPU", "Total variation denoising (tvdenoise)");
+                onError.add([p=d_px[dev], q]{ sycl::free(p, *q); });
                 // PY
-                d_py[dev]=(float*)sycl::malloc_device(mem_img_each_GPU,*q);
+                d_py[dev]=(float*)tigre::deviceMallocBytes(mem_img_each_GPU, gpuids[dev], "tvDenoise:tvdenoising:GPU", "Total variation denoising (tvdenoise)");
+                onError.add([p=d_py[dev], q]{ sycl::free(p, *q); });
                 // PZ
-                d_pz[dev]=(float*)sycl::malloc_device(mem_img_each_GPU,*q);
+                d_pz[dev]=(float*)tigre::deviceMallocBytes(mem_img_each_GPU, gpuids[dev], "tvDenoise:tvdenoising:GPU", "Total variation denoising (tvdenoise)");
+                onError.add([p=d_pz[dev], q]{ sycl::free(p, *q); });
             }
             q->wait();
         
@@ -339,6 +361,7 @@ using namespace tigre_tv_proximal;
             int nStream_device=5;
             int nStreams=deviceCount*nStream_device;
             sycl::queue** stream=(sycl::queue**)malloc(nStreams*sizeof(sycl::queue*));
+            onError.add([p=stream]{ free(p); });
         
             for (dev = 0; dev < deviceCount; dev++){
                 q=&tigreSyclQueue(gpuids[dev]);
@@ -361,8 +384,11 @@ using namespace tigre_tv_proximal;
             unsigned long long buffer_pixels=buffer_length*pixels_per_slice;
         
             unsigned long long* offset_device=(unsigned long long*)malloc(deviceCount*sizeof(unsigned long long));
+            onError.add([p=offset_device]{ free(p); });
             unsigned long long* offset_host  =(unsigned long long*)malloc(deviceCount*sizeof(unsigned long long));
+            onError.add([p=offset_host]{ free(p); });
             unsigned long long* bytes_device =(unsigned long long*)malloc(deviceCount*sizeof(unsigned long long));
+            onError.add([p=bytes_device]{ free(p); });
             bool is_first_chunk;
             bool is_last_chunk;
         
@@ -614,6 +640,7 @@ using namespace tigre_tv_proximal;
                 q=&tigreSyclQueue(gpuids[dev]);
                 q->wait();
             }
+            onError.dismiss();  // from here on the function releases everything itself
             for(dev=0; dev<deviceCount;dev++){
             
                 sycl::free(d_src[dev],tigreSyclQueue(gpuids[dev]));

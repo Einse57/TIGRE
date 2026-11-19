@@ -57,6 +57,7 @@ Codes  : https://github.com/CERN/TIGRE
 #include <sycl/sycl.hpp>
 #include "PICCS.hpp"
 #include "tigre_sycl.hpp"
+#include "tigre_release_on_error.hpp"
 
 // The kernels of each TIGRE module share one SYCL runtime in a Python process, and the
 // runtime finds kernels by name. A named namespace keeps these kernel names distinct
@@ -160,19 +161,30 @@ using namespace tigre_piccs;
         
             float *d_image,*d_prior,*d_dpiccsTV, *d_dimgTV,*d_aux_small,*d_aux_image, *d_norm2;
             // memory for image
-            d_image=(float*)sycl::malloc_device(mem_size,*q);
-            d_prior=(float*)sycl::malloc_device(mem_size,*q);
+            // onError releases what the call holds if it is left by an error (see
+            // tigre_release_on_error.hpp), as in the CUDA build (#870).
+            tigre::ReleaseOnError onError;
+            onError.addQueue(&tigreSyclQueue(gpuids[0]));
+            d_image=(float*)tigre::deviceMallocBytes(mem_size, gpuids[0], "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)");
+            onError.add([p=d_image, q]{ sycl::free(p, *q); });
+            d_prior=(float*)tigre::deviceMallocBytes(mem_size, gpuids[0], "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)");
+            onError.add([p=d_prior, q]{ sycl::free(p, *q); });
 
             q->memcpy(d_image,img,mem_size).wait();
             q->memcpy(d_prior,prior,mem_size).wait();
             // memory for df
-            d_dimgTV=(float*)sycl::malloc_device(mem_size,*q);
-            d_dpiccsTV=(float*)sycl::malloc_device(mem_size,*q);
-            d_norm2=(float*)sycl::malloc_device(mem_size,*q);
-            d_aux_image=(float*)sycl::malloc_device(mem_size,*q);
+            d_dimgTV=(float*)tigre::deviceMallocBytes(mem_size, gpuids[0], "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)");
+            onError.add([p=d_dimgTV, q]{ sycl::free(p, *q); });
+            d_dpiccsTV=(float*)tigre::deviceMallocBytes(mem_size, gpuids[0], "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)");
+            onError.add([p=d_dpiccsTV, q]{ sycl::free(p, *q); });
+            d_norm2=(float*)tigre::deviceMallocBytes(mem_size, gpuids[0], "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)");
+            onError.add([p=d_norm2, q]{ sycl::free(p, *q); });
+            d_aux_image=(float*)tigre::deviceMallocBytes(mem_size, gpuids[0], "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)");
+            onError.add([p=d_aux_image, q]{ sycl::free(p, *q); });
         
             // memory for L2norm auxiliar
-            d_aux_small=(float*)sycl::malloc_device(sizeof(float)*(total_pixels + MAXTHREADS - 1) / MAXTHREADS,*q);
+            d_aux_small=(float*)tigre::deviceMallocBytes(sizeof(float)*(total_pixels + MAXTHREADS - 1) / MAXTHREADS, gpuids[0], "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)");
+            onError.add([p=d_aux_small, q]{ sycl::free(p, *q); });
         
         
         
@@ -225,6 +237,7 @@ using namespace tigre_piccs;
         
             q->memcpy(dst,d_image,mem_size).wait();
         
+            onError.dismiss();  // from here on the function releases everything itself
             sycl::free(d_image,*q);
             sycl::free(d_dimgTV,*q);
             sycl::free(d_dpiccsTV,*q);

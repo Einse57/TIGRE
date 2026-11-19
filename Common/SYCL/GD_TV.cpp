@@ -61,6 +61,7 @@
 #include "GD_TV.hpp"
 #include "gpuUtils.hpp"
 #include "tigre_sycl.hpp"
+#include "tigre_release_on_error.hpp"
 
 // The kernels of each TIGRE module share one SYCL runtime in a Python process, and the
 // runtime finds kernels by name. A named namespace keeps these kernel names distinct
@@ -260,22 +261,34 @@ using namespace tigre_gd_tv;
         
         
         
+            // onError releases what the call holds if it is left by an error (see
+            // tigre_release_on_error.hpp), as in the CUDA build (#870).
+            tigre::ReleaseOnError onError;
+            for (int d = 0; d < deviceCount; d++) onError.addQueue(&tigreSyclQueue(gpuids[d]));
             float** d_image=    (float**)malloc(deviceCount*sizeof(float*));
+            onError.add([p=d_image]{ free(p); });
             float** d_dimgTV=   (float**)malloc(deviceCount*sizeof(float*));
+            onError.add([p=d_dimgTV]{ free(p); });
             float** d_norm2aux= (float**)malloc(deviceCount*sizeof(float*));
+            onError.add([p=d_norm2aux]{ free(p); });
             float** d_norm2=    (float**)malloc(deviceCount*sizeof(float*));
+            onError.add([p=d_norm2]{ free(p); });
          
             // allocate memory in each GPU
             for (dev = 0; dev < deviceCount; dev++){
                 q=&tigreSyclQueue(gpuids[dev]);
             
-                d_image[dev]=(float*)sycl::malloc_device(mem_img_each_GPU,*q);
+                d_image[dev]=(float*)tigre::deviceMallocBytes(mem_img_each_GPU, gpuids[dev], "GD_TV:GPU", "Total variation minimization (minTV)");
+                onError.add([p=d_image[dev], q]{ sycl::free(p, *q); });
                 q->memset(d_image[dev],0,mem_img_each_GPU).wait();
-                d_dimgTV[dev]=(float*)sycl::malloc_device(mem_img_each_GPU,*q);
+                d_dimgTV[dev]=(float*)tigre::deviceMallocBytes(mem_img_each_GPU, gpuids[dev], "GD_TV:GPU", "Total variation minimization (minTV)");
+                onError.add([p=d_dimgTV[dev], q]{ sycl::free(p, *q); });
                 q->memset(d_dimgTV[dev],0,mem_img_each_GPU).wait();
-                d_norm2[dev]=(float*)sycl::malloc_device(slices_per_split*mem_slice_image,*q);
+                d_norm2[dev]=(float*)tigre::deviceMallocBytes(slices_per_split*mem_slice_image, gpuids[dev], "GD_TV:GPU", "Total variation minimization (minTV)");
+                onError.add([p=d_norm2[dev], q]{ sycl::free(p, *q); });
                 q->memset(d_norm2[dev],0,slices_per_split*mem_slice_image).wait();
-                d_norm2aux[dev]=(float*)sycl::malloc_device(mem_auxiliary,*q);
+                d_norm2aux[dev]=(float*)tigre::deviceMallocBytes(mem_auxiliary, gpuids[dev], "GD_TV:GPU", "Total variation minimization (minTV)");
+                onError.add([p=d_norm2aux[dev], q]{ sycl::free(p, *q); });
                 q->memset(d_norm2aux[dev],0,mem_auxiliary).wait();
             
             
@@ -286,6 +299,7 @@ using namespace tigre_gd_tv;
                 mexWarnMsgIdAndTxt("minimizeTV:GD_TV:Image_split","Your image can not be fully split between the available GPUs. The computation of minTV will be significantly slowed due to the image size.\nApproximated mathematics turned on for computational speed.");
             }else{
                 buffer=(float*)malloc(buffer_length*image_size[0]*image_size[1]*sizeof(float));
+                onError.add([p=buffer]{ free(p); });
             }
         
         
@@ -297,6 +311,7 @@ using namespace tigre_gd_tv;
             int nStream_device=2;
             int nStreams=deviceCount*nStream_device;
             sycl::queue** stream=(sycl::queue**)malloc(nStreams*sizeof(sycl::queue*));
+            onError.add([p=stream]{ free(p); });
         
             for (dev = 0; dev < deviceCount; dev++){
                 q=&tigreSyclQueue(gpuids[dev]);
@@ -313,13 +328,17 @@ using namespace tigre_gd_tv;
             float sum_curr_spl;
             float * sumnorm2;
             sumnorm2=(float*)malloc(deviceCount*sizeof(float));
+            onError.add([p=sumnorm2]{ free(p); });
         
             unsigned int curr_slices;
             unsigned long long curr_pixels;
             size_t linear_idx_start;
             unsigned long long* offset_device=(unsigned long long*)malloc(deviceCount*sizeof(unsigned long long));
+            onError.add([p=offset_device]{ free(p); });
             unsigned long long* offset_host  =(unsigned long long*)malloc(deviceCount*sizeof(unsigned long long));
+            onError.add([p=offset_host]{ free(p); });
             unsigned long long* bytes_device =(unsigned long long*)malloc(deviceCount*sizeof(unsigned long long));
+            onError.add([p=bytes_device]{ free(p); });
             bool is_first_chunk;
             bool is_last_chunk;
             for(unsigned int i=0;i<maxIter;i+=(buffer_length-1)){
@@ -530,6 +549,7 @@ using namespace tigre_gd_tv;
                 }
             }
         
+            onError.dismiss();  // from here on the function releases everything itself
             for(dev=0; dev<deviceCount;dev++){
                 q=&tigreSyclQueue(gpuids[dev]);
                 sycl::free(d_image[dev],tigreSyclQueue(gpuids[dev]));
