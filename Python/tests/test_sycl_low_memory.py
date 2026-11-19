@@ -122,3 +122,31 @@ def test_too_little_memory_raises_out_of_memory(tmp_path, unlimited):
         _assert_out_of_memory(name, result[name])
     for name in ("Ax", "AxSiddon"):
         _assert_close(name, result[name], unlimited[name], finite_only=("AxSiddon",))
+
+
+TWO_DEVICES_SCRIPT = r"""
+import numpy as np
+from tigre.utilities.gpu import GpuIds
+from _tv_proximal import tvdenoise
+
+img = np.random.default_rng(1).random((128, 128, 128), dtype=np.float32)  # 8 MB
+one = GpuIds()
+one.devices = one.devices[:1]
+two = GpuIds()
+two.devices = [one.devices[0], one.devices[0]]  # the same device twice: two pieces, one split
+ref = tvdenoise(img.copy(), 20, 15.0, gpuids=one)
+out = tvdenoise(img.copy(), 20, 15.0, gpuids=two)
+print("diff", float(np.abs(out - ref).max() / np.abs(ref).max()))
+"""
+
+
+def test_tvdenoise_two_devices_one_split(tmp_path):
+    # 24 MB: 5 images do not fit, but with two devices one split does, with halos of 5
+    # slices. The host buffers of the halo exchange between the devices must hold all 5.
+    script = tmp_path / "two_devices.py"
+    script.write_text(TWO_DEVICES_SCRIPT)
+    env = dict(os.environ, TIGRE_SYCL_MEMORY_LIMIT_MB="24")
+    result = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=600)
+    assert result.returncode == 0, result.stdout + result.stderr
+    diff = float(result.stdout.rsplit("diff", 1)[1])
+    assert diff < 1e-6, diff

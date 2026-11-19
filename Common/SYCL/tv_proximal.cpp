@@ -319,13 +319,15 @@ using namespace tigre_tv_proximal;
                 }
                 h_u=dst;
             }else{
-                buffer_u=(float*)malloc(  pixels_per_slice*sizeof(float));
+                // The exchange between devices copies buffer_length slices: with splits==1 from the
+                // "does not fit" branch above, buffer_length can be more than 1.
+                buffer_u=(float*)malloc(  (size_t)buffer_length*pixels_per_slice*sizeof(float));
                 onError.add([p=buffer_u]{ free(p); });
-                buffer_px=(float*)malloc( pixels_per_slice*sizeof(float));
+                buffer_px=(float*)malloc( (size_t)buffer_length*pixels_per_slice*sizeof(float));
                 onError.add([p=buffer_px]{ free(p); });
-                buffer_py=(float*)malloc( pixels_per_slice*sizeof(float));
+                buffer_py=(float*)malloc( (size_t)buffer_length*pixels_per_slice*sizeof(float));
                 onError.add([p=buffer_py]{ free(p); });
-                buffer_pz=(float*)malloc( pixels_per_slice*sizeof(float));
+                buffer_pz=(float*)malloc( (size_t)buffer_length*pixels_per_slice*sizeof(float));
                 onError.add([p=buffer_pz]{ free(p); });
             
             }
