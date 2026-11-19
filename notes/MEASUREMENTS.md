@@ -66,3 +66,8 @@ First call in the process, median of runs 2–5, in seconds:
 - **Ax:** relative L2 ≤ 1.0e-4 on both machines. The largest differences (5.7e-2 at 128³, 1.3e-2 on the large volume) come from a few Siddon rays, where float32 rounding can change which voxels a ray crosses: 1 of 1.92 M rays at 128³, and 163 (Arc 140T) or 145 (Arc Pro B50) of 2.1 M on the large volume, are above 1e-3.
 - **minTV, small and 128³:** max. difference ≤ 1.2e-3 and relative L2 ≤ 6.9e-6. Both devices are as close to a float64 NumPy reference as a float32 NumPy run is.
 - **minTV, large volume:** without splitting (Arc Pro B50 and both CPU devices), the results agree within 8.3e-5 max. difference and 1.7e-6 relative L2. The split run on the Arc 140T differs from them by up to 1.6e-3 (relative L2 3.0e-4).
+
+**Re-run on the laptop with commit 51e8dfd** (this branch with TIGRE master up to #868 merged in, and its CUDA changes ported to SYCL), same method and inputs:
+- Outputs: all 12 problem/operation pairs are bitwise identical to the 6b45fe1 run, on the Arc 140T and on the CPU device. The parity figures above still hold.
+- Second-call times: within the run-to-run range of the table above, except on the Core Ultra 9 285H for 128³ minTV, 0.0154 s (0.0152–0.0161); large-volume minTV, 15.9 s (15.9–16.3); and small FDK, 0.00505 s (0.00359–0.00786). Small FDK on the Arc 140T took 0.00367 s (0.0036–0.00458).
+- The table above is from 6b45fe1 on both machines.
