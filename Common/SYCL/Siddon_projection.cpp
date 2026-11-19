@@ -53,6 +53,7 @@
 #include "Siddon_projection.hpp"
 #include "TIGRE_common.hpp"
 #include "tigre_sycl.hpp"
+#include "tigre_release_on_error.hpp"
 #include <math.h>
 
 #define MAXTREADS 1024
@@ -279,6 +280,9 @@ int siddon_ray_projection(float* img, Geometry geo, float** result,float const *
         mexWarnMsgIdAndTxt("Ax:Siddon_projection:GPUselect","Detected one (or more) different GPUs.\n This code is not smart enough to separate the memory GPU wise if they have different computational times or memory limits.\n First GPU parameters used. If the code errors you might need to change the way GPU selection is performed.");
     }
     int dev;
+    // If an error raises (Python build) before the end of this function, onError
+    // releases what it holds; see tigre_release_on_error.hpp.
+    tigre::ReleaseOnError onError;
     try {
         // Check the available device memory: same image split rule as the CUDA code.
         size_t mem_GPU_global;
@@ -299,17 +303,21 @@ int siddon_ray_projection(float* img, Geometry geo, float** result,float const *
         }
         Geometry* geoArray = (Geometry*)malloc(splits*sizeof(Geometry));
         splitImage(splits,geo,geoArray,nangles);
+        onError.add([geoArray, splits]{ freeGeoArray(splits, geoArray); });
 
         // Allocate the image (a slab of it if split) and one block of projections per device
         size_t num_voxels_split = (size_t)geoArray[0].nVoxelX*(size_t)geoArray[0].nVoxelY*(size_t)geoArray[0].nVoxelZ;
         size_t num_pixels_block = (size_t)PROJ_PER_BLOCK*(size_t)geo.nDetecU*(size_t)geo.nDetecV;
         std::vector<float*> dImage(deviceCount), dProjection(deviceCount);
         for (dev = 0; dev < deviceCount; dev++){
-            sycl::queue& q = tigreSyclQueue(gpuids[dev]);
-            dImage[dev] = sycl::malloc_device<float>(num_voxels_split, q);
-            dProjection[dev] = sycl::malloc_device<float>(num_pixels_block, q);
-            if (!dImage[dev] || !dProjection[dev])
-                mexErrMsgIdAndTxt("Ax:Siddon_projection:malloc","Device memory allocation failed\n");
+            sycl::queue* q = &tigreSyclQueue(gpuids[dev]);
+            onError.addQueue(q);
+            float* image_d = tigre::deviceMalloc<float>(num_voxels_split, gpuids[dev], "Ax:Siddon_projection:malloc", "Forward projection (Siddon)");
+            onError.add([image_d, q]{ sycl::free(image_d, *q); });
+            float* projection_d = tigre::deviceMalloc<float>(num_pixels_block, gpuids[dev], "Ax:Siddon_projection:malloc", "Forward projection (Siddon)");
+            onError.add([projection_d, q]{ sycl::free(projection_d, *q); });
+            dImage[dev] = image_d;
+            dProjection[dev] = projection_d;
         }
         std::vector<float> partial(splits>1 ? num_pixels_block*deviceCount : 0);
 
@@ -377,6 +385,7 @@ int siddon_ray_projection(float* img, Geometry geo, float** result,float const *
                 }
             }
         }
+        onError.dismiss();  // from here on the function releases everything itself
         for (dev = 0; dev < deviceCount; dev++){
             sycl::queue& q = tigreSyclQueue(gpuids[dev]);
             q.wait_and_throw();
@@ -585,11 +594,11 @@ void freeGeoArray(unsigned int splits,Geometry* geoArray){
     free(geoArray);
 }
 void checkFreeMemory(const GpuIds& gpuids, size_t *mem_GPU_global){
-    // SYCL has no portable "free memory" query: use the global memory of the
-    // device (95%), capped by the largest single allocation it allows.
+    // Free memory where the SYCL runtime reports it, otherwise the global memory
+    // of the device (95%); never more than the largest single allocation.
     const int deviceCount = gpuids.GetLength();
     for (int dev = 0; dev < deviceCount; dev++){
-        size_t mem = tigreSyclMaxAlloc(gpuids[dev]);
+        size_t mem = tigreSyclCheckFreeMemory(gpuids[dev],"Ax:Siddon_projection:GPUmemory");
         if(dev==0) *mem_GPU_global=mem;
         *mem_GPU_global=(mem<*mem_GPU_global)?mem:*mem_GPU_global;
     }

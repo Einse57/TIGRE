@@ -52,6 +52,7 @@
 #include "voxel_backprojection_parallel.hpp"
 #include "TIGRE_common.hpp"
 #include "tigre_sycl.hpp"
+#include "tigre_release_on_error.hpp"
 #include <math.h>
 
 #define MAXTREADS 1024
@@ -272,6 +273,9 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
         mexWarnMsgIdAndTxt("Atb:Voxel_backprojection_parallel:GPUselect","Detected one (or more) different GPUs.\n This code is not smart enough to separate the memory GPU wise if they have different computational times or memory limits.\n First GPU parameters used. If the code errors you might need to change the way GPU selection is performed.");
     }
     int dev;
+    // If an error raises (Python build) before the end of this function, onError
+    // releases what it holds; see tigre_release_on_error.hpp.
+    tigre::ReleaseOnError onError;
     try {
         // Same image/projection split rule as the CUDA code
         unsigned int split_image;
@@ -281,6 +285,8 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
         // Each device gets a slab of the image along Z
         Geometry* geoArray=(Geometry*)malloc(split_image*deviceCount*sizeof(Geometry));
         createGeoArray(split_image*deviceCount,geo,geoArray,nalpha);
+        const unsigned int nGeo = split_image*deviceCount;
+        onError.add([geoArray, nGeo]{ freeGeoArray(nGeo, geoArray); });
 
         size_t num_voxels_img = (size_t)geo.nVoxelX*(size_t)geo.nVoxelY*(size_t)geoArray[0].nVoxelZ;
         size_t num_pixels_proj = (size_t)geo.nDetecU*(size_t)geo.nDetecV;
@@ -300,13 +306,20 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
         std::vector<std::vector<Point3D>> projParamsArrayHost(deviceCount, std::vector<Point3D>(6*params_size));
         std::vector<std::vector<float>> projSinCosArrayHost(deviceCount, std::vector<float>(3*params_size));
         for (dev = 0; dev < deviceCount; dev++){
-            sycl::queue& q = tigreSyclQueue(gpuids[dev]);
-            dimage[dev] = sycl::malloc_device<float>(num_voxels_img, q);
-            dprojection[dev] = sycl::malloc_device<float>((size_t)proj_split_size*num_pixels_proj, q);
-            dParams[dev] = sycl::malloc_device<Point3D>(6*params_size, q);
-            dSinCos[dev] = sycl::malloc_device<float>(3*params_size, q);
-            if (!dimage[dev] || !dprojection[dev] || !dParams[dev] || !dSinCos[dev])
-                mexErrMsgIdAndTxt("Atb:Voxel_backprojection_parallel:malloc","Device memory allocation failed\n");
+            sycl::queue* q = &tigreSyclQueue(gpuids[dev]);
+            onError.addQueue(q);
+            float* image_d = tigre::deviceMalloc<float>(num_voxels_img, gpuids[dev], "Atb:Voxel_backprojection_parallel:malloc", "Backprojection (parallel beam)");
+            onError.add([image_d, q]{ sycl::free(image_d, *q); });
+            float* projection_d = tigre::deviceMalloc<float>((size_t)proj_split_size*num_pixels_proj, gpuids[dev], "Atb:Voxel_backprojection_parallel:malloc", "Backprojection (parallel beam)");
+            onError.add([projection_d, q]{ sycl::free(projection_d, *q); });
+            Point3D* params_d = tigre::deviceMalloc<Point3D>(6*params_size, gpuids[dev], "Atb:Voxel_backprojection_parallel:malloc", "Backprojection (parallel beam)");
+            onError.add([params_d, q]{ sycl::free(params_d, *q); });
+            float* sincos_d = tigre::deviceMalloc<float>(3*params_size, gpuids[dev], "Atb:Voxel_backprojection_parallel:malloc", "Backprojection (parallel beam)");
+            onError.add([sincos_d, q]{ sycl::free(sincos_d, *q); });
+            dimage[dev] = image_d;
+            dprojection[dev] = projection_d;
+            dParams[dev] = params_d;
+            dSinCos[dev] = sincos_d;
         }
 
         for(unsigned int img_slice=0;img_slice<split_image;img_slice++){
@@ -379,6 +392,7 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
             for (dev = 0; dev < deviceCount; dev++)
                 tigreSyclQueue(gpuids[dev]).wait_and_throw();
         }
+        onError.dismiss();  // from here on the function releases everything itself
         for (dev = 0; dev < deviceCount; dev++){
             sycl::queue& q = tigreSyclQueue(gpuids[dev]);
             sycl::free(dimage[dev], q);

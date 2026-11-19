@@ -558,7 +558,7 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
 void checkFreeMemory(const GpuIds& gpuids,size_t *mem_GPU_global){
         int deviceCount = gpuids.GetLength();
         for (int dev = 0; dev < deviceCount; dev++){
-            size_t memfree=tigreSyclMaxAlloc(gpuids[dev]);
+            size_t memfree=tigreSyclCheckFreeMemory(gpuids[dev],"minimizeAwTV:GD_AwTV:GPU");
             if(dev==0) *mem_GPU_global=memfree;
             *mem_GPU_global=(memfree<*mem_GPU_global)?memfree:*mem_GPU_global;
         }

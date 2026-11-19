@@ -598,7 +598,12 @@ def _sycl_extension(ext):
         ):
             source = "Common/SYCL/" + os.path.basename(name) + ".cpp"
         sources.append(source)
+    # tigre_sycl.cpp reports through TIGRE_common (errors and warnings), so every
+    # SYCL extension needs it, including _gpuUtils.
+    if "Common/CUDA/TIGRE_common.cpp" not in sources:
+        sources.insert(0, "Common/CUDA/TIGRE_common.cpp")
     ext.sources = sources + ["Common/SYCL/tigre_sycl.cpp"]
+    ext.define_macros = define_macros
     ext.library_dirs = []
     ext.libraries = []
     ext.runtime_library_dirs = []

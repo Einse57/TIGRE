@@ -51,6 +51,7 @@
 #include "gpuUtils.hpp"
 #include "RandomNumberGenerator.hpp"
 #include "tigre_sycl.hpp"
+#include "tigre_release_on_error.hpp"
 
 // curand is not available in SYCL. Each element draws from its own
 // Philox4x32-10 stream (counter = element index, key = fixed seed), so the
@@ -138,10 +139,17 @@ struct PhiloxStream {
 static const uint32_t kSeed=1234;
 
 static void generate(const float* pfIn, size_t uiLen, bool bGauss, float fGaussMu, float fGaussSigma, float* pfOut, int iDevice, const char* tag){
+    // If an error raises (Python build), onError releases the device memory; see
+    // tigre_release_on_error.hpp.
+    tigre::ReleaseOnError onError;
     try {
         sycl::queue& q=tigreSyclQueue(iDevice);
-        float* d_pfIn =sycl::malloc_device<float>(uiLen, q);
-        float* d_pfOut=sycl::malloc_device<float>(uiLen, q);
+        sycl::queue* pq=&q;
+        onError.addQueue(pq);
+        float* d_pfIn =tigre::deviceMalloc<float>(uiLen, iDevice, tag, "Noise generation (CTnoise)");
+        onError.add([d_pfIn, pq]{ sycl::free(d_pfIn, *pq); });
+        float* d_pfOut=tigre::deviceMalloc<float>(uiLen, iDevice, tag, "Noise generation (CTnoise)");
+        onError.add([d_pfOut, pq]{ sycl::free(d_pfOut, *pq); });
         q.memcpy(d_pfIn, pfIn, uiLen*sizeof(float));
         q.parallel_for(sycl::range<1>(uiLen), [=](sycl::id<1> id){
             size_t uiPos=id[0];
@@ -155,6 +163,7 @@ static void generate(const float* pfIn, size_t uiLen, bool bGauss, float fGaussM
             }
         });
         q.memcpy(pfOut, d_pfOut, uiLen*sizeof(float)).wait();
+        onError.dismiss();  // from here on the function releases everything itself
         sycl::free(d_pfIn, q);
         sycl::free(d_pfOut, q);
     } catch (const sycl::exception& e) {

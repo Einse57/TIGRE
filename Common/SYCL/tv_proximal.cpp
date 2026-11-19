@@ -642,7 +642,7 @@ using namespace tigre_tv_proximal;
 void checkFreeMemory(const GpuIds& gpuids,size_t *mem_GPU_global){
         int deviceCount = gpuids.GetLength();
         for (int dev = 0; dev < deviceCount; dev++){
-            size_t memfree=tigreSyclMaxAlloc(gpuids[dev]);
+            size_t memfree=tigreSyclCheckFreeMemory(gpuids[dev],"tvDenoise:tvdenoising:GPU");
             if(dev==0) *mem_GPU_global=memfree;
             *mem_GPU_global=(memfree<*mem_GPU_global)?memfree:*mem_GPU_global;
         }
@@ -669,4 +669,4 @@ void cpy_from_host(float* device_array,float* host_array,
     }
     stream->wait();
     stream->memcpy(device_array +offset_device,host_array +offset_host,bytes_device*sizeof(float));
-}
+}

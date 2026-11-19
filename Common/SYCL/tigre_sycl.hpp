@@ -36,6 +36,20 @@ sycl::queue& tigreSyclQueue(int iDeviceId);
 //! single allocation are both taken into account.
 size_t tigreSyclMaxAlloc(int iDeviceId);
 
+//! @brief Free device memory in bytes, as far as the SYCL runtime reports it
+//! (sycl::ext::intel::info::device::free_memory, e.g. on Level Zero GPUs), and
+//! never more than tigreSyclMaxAlloc(). Devices that do not report it (e.g. the
+//! OpenCL CPU device) give tigreSyclMaxAlloc().
+size_t tigreSyclFreeMemory(int iDeviceId);
+
+//! @brief Total device memory in bytes (global memory size).
+size_t tigreSyclTotalMemory(int iDeviceId);
+
+//! @brief tigreSyclFreeMemory() for TIGRE's memory checks (checkFreeMemory).
+//! As in the CUDA build, warns (tag) if less than half of the device memory is
+//! free, when the runtime reports free memory.
+size_t tigreSyclCheckFreeMemory(int iDeviceId, const char* tag);
+
 //! @brief Point-sampled fetch with border (zero) addressing, as a CUDA
 //! cudaFilterModePoint + cudaAddressModeBorder texture with unnormalized
 //! coordinates.

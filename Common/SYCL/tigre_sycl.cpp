@@ -15,6 +15,7 @@
  */
 
 #include "tigre_sycl.hpp"
+#include "TIGRE_common.hpp"
 #include <memory>
 #include <mutex>
 #include <algorithm>
@@ -60,4 +61,38 @@ size_t tigreSyclMaxAlloc(int iDeviceId){
     size_t global   = device.get_info<sycl::info::device::global_mem_size>();
     size_t maxAlloc = device.get_info<sycl::info::device::max_mem_alloc_size>();
     return std::min((size_t)((double)global*0.95), maxAlloc);
+}
+
+// Free memory as reported by the runtime, if it reports it.
+static bool reportedFreeMemory(int iDeviceId, size_t* free_bytes){
+    const sycl::device& device = tigreSyclDevices()[iDeviceId];
+    if (!device.has(sycl::aspect::ext_intel_free_memory))
+        return false;
+    try {
+        *free_bytes = device.get_info<sycl::ext::intel::info::device::free_memory>();
+        return true;
+    } catch (const sycl::exception&) {
+        // Not available after all (e.g. Level Zero Sysman not initialised).
+        return false;
+    }
+}
+
+size_t tigreSyclFreeMemory(int iDeviceId){
+    size_t usable = tigreSyclMaxAlloc(iDeviceId);
+    size_t free_bytes;
+    if (reportedFreeMemory(iDeviceId, &free_bytes))
+        usable = std::min(usable, free_bytes);
+    return usable;
+}
+
+size_t tigreSyclTotalMemory(int iDeviceId){
+    return tigreSyclDevices()[iDeviceId].get_info<sycl::info::device::global_mem_size>();
+}
+
+size_t tigreSyclCheckFreeMemory(int iDeviceId, const char* tag){
+    size_t free_bytes;
+    if (reportedFreeMemory(iDeviceId, &free_bytes) && free_bytes < tigreSyclTotalMemory(iDeviceId)/2){
+        mexWarnMsgIdAndTxt(tag,"One (or more) of your GPUs is being heavily used by another program (less than half of its memory is free). TIGRE will try to run anyway, but it may need to split the problem into smaller pieces (slower) or run out of GPU memory.\n");
+    }
+    return tigreSyclFreeMemory(iDeviceId);
 }
