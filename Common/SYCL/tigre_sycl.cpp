@@ -19,6 +19,7 @@
 #include <memory>
 #include <mutex>
 #include <algorithm>
+#include <stdlib.h>
 
 static std::vector<sycl::device> enumerateDevices(){
     std::vector<sycl::device> l0Gpus, otherGpus, others;
@@ -56,11 +57,20 @@ sycl::queue& tigreSyclQueue(int iDeviceId){
     return *queues[iDeviceId];
 }
 
+// TIGRE_SYCL_MEMORY_LIMIT_MB caps the memory TIGRE plans with on every device.
+// For tests: it makes the split and out-of-memory paths reachable on any device.
+static size_t memoryLimit(){
+    const char* value = getenv("TIGRE_SYCL_MEMORY_LIMIT_MB");
+    if (!value || !*value)
+        return (size_t)-1;
+    return (size_t)strtoull(value, nullptr, 10) << 20;
+}
+
 size_t tigreSyclMaxAlloc(int iDeviceId){
     const sycl::device& device = tigreSyclDevices()[iDeviceId];
     size_t global   = device.get_info<sycl::info::device::global_mem_size>();
     size_t maxAlloc = device.get_info<sycl::info::device::max_mem_alloc_size>();
-    return std::min((size_t)((double)global*0.95), maxAlloc);
+    return std::min(std::min((size_t)((double)global*0.95), maxAlloc), memoryLimit());
 }
 
 // Free memory as reported by the runtime, if it reports it.

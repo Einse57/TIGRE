@@ -33,7 +33,8 @@ const std::vector<sycl::device>& tigreSyclDevices();
 sycl::queue& tigreSyclQueue(int iDeviceId);
 
 //! @brief Usable memory in bytes on a device: global memory and the largest
-//! single allocation are both taken into account.
+//! single allocation are both taken into account, and the environment variable
+//! TIGRE_SYCL_MEMORY_LIMIT_MB, if set, caps it (for tests).
 size_t tigreSyclMaxAlloc(int iDeviceId);
 
 //! @brief Free device memory in bytes, as far as the SYCL runtime reports it
