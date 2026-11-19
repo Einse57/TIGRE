@@ -181,90 +181,72 @@ static inline void kernelPixelDetector(const Geometry& geo,
         return;
     }
 
-    // Compute max/min image INDEX for intersection eq(11-19)
-    // Discussion about ternary operator in CUDA: https://stackoverflow.com/questions/7104384/in-cuda-why-is-a-b010-more-efficient-than-an-if-else-version
-    float imin,imax,jmin,jmax,kmin,kmax;
-    // for X
-    if( source.x<pixel1D.x){
-        imin=(am==axm)? 1.0f             : sycl::ceil(source.x+am*ray.x);
-        imax=(aM==axM)? geo.nVoxelX      : sycl::floor(source.x+aM*ray.x);
-    }else{
-        imax=(am==axm)? geo.nVoxelX-1.0f : sycl::floor(source.x+am*ray.x);
-        imin=(aM==axM)? 0.0f             : sycl::ceil(source.x+aM*ray.x);
-    }
-    // for Y
-    if( source.y<pixel1D.y){
-        jmin=(am==aym)? 1.0f             : sycl::ceil(source.y+am*ray.y);
-        jmax=(aM==ayM)? geo.nVoxelY      : sycl::floor(source.y+aM*ray.y);
-    }else{
-        jmax=(am==aym)? geo.nVoxelY-1.0f : sycl::floor(source.y+am*ray.y);
-        jmin=(aM==ayM)? 0.0f             : sycl::ceil(source.y+aM*ray.y);
-    }
-    // for Z
-    if( source.z<pixel1D.z){
-        kmin=(am==azm)? 1.0f             : sycl::ceil(source.z+am*ray.z);
-        kmax=(aM==azM)? geo.nVoxelZ      : sycl::floor(source.z+aM*ray.z);
-    }else{
-        kmax=(am==azm)? geo.nVoxelZ-1.0f : sycl::floor(source.z+am*ray.z);
-        kmin=(aM==azM)? 0.0f             : sycl::ceil(source.z+aM*ray.z);
-    }
-    
-    // get intersection point N1. eq(20-21) [(also eq 9-10)]
-    float ax,ay,az;
-    ax=(source.x<pixel1D.x)?  ((imin-source.x)/(ray.x)) :  ((imax-source.x)/(ray.x));
-    ay=(source.y<pixel1D.y)?  ((jmin-source.y)/(ray.y)) :  ((jmax-source.y)/(ray.y));
-    az=(source.z<pixel1D.z)?  ((kmin-source.z)/(ray.z)) :  ((kmax-source.z)/(ray.z));
-    
-    // If its Infinite (i.e. ray is parallel to axis), make sure its positive
-    ax=(sycl::isinf(ax))? sycl::fabs(ax) : ax;
-    ay=(sycl::isinf(ay))? sycl::fabs(ay) : ay;
-    az=(sycl::isinf(az))? sycl::fabs(az) : az;    
-       
-    
-    // get index of first intersection. eq (26) and (19)
-    long i,j,k;
-    float aminc=sycl::fmin(sycl::fmin(ax,ay),az);
-    i=(long)sycl::floor(source.x+ (aminc+am)*0.5f*ray.x);
-    j=(long)sycl::floor(source.y+ (aminc+am)*0.5f*ray.y);
-    k=(long)sycl::floor(source.z+ (aminc+am)*0.5f*ray.z);
-    // Initialize
-    float ac=am;
-    //eq (28), unit anlges
-    float axu,ayu,azu;
-    axu=(1.0f/(sycl::fabs(ray.x)));
-    ayu=(1.0f/(sycl::fabs(ray.y)));
-    azu=(1.0f/(sycl::fabs(ray.z)));
-    // eq(29), direction of update
-    float iu,ju,ku;
-    iu=(source.x< pixel1D.x)? 1.0f : -1.0f;
-    ju=(source.y< pixel1D.y)? 1.0f : -1.0f;
-    ku=(source.z< pixel1D.z)? 1.0f : -1.0f;
-    
+    // Walk the voxels the ray crosses, from where it enters the box (am) to where
+    // it leaves (aM), adding up length x value (#859, as in the CUDA kernel).
+    //
+    // The first voxel is the one the ray is in just after entering. When the
+    // entry point lies on a voxel boundary of another axis too, the direction
+    // decides the side: moving up, floor(); moving down, ceil()-1. The next
+    // crossing on each axis is then computed from that voxel's own faces, so the
+    // two always agree. Before, the first voxel came from a midpoint and the
+    // first crossings from ceil/floor of the entry point, separately; on such
+    // rays they disagreed, giving a wrong first voxel or the whole ray one voxel
+    // off along an axis. Rare for the whole image, but common when the image is
+    // split in pieces, where many rays enter a piece through its z faces.
+    float pX=source.x+am*ray.x;
+    float pY=source.y+am*ray.y;
+    float pZ=source.z+am*ray.z;
+    int i=(ray.x<0.0f)? (int)sycl::ceil(pX)-1 : (int)sycl::floor(pX);
+    int j=(ray.y<0.0f)? (int)sycl::ceil(pY)-1 : (int)sycl::floor(pY);
+    int k=(ray.z<0.0f)? (int)sycl::ceil(pZ)-1 : (int)sycl::floor(pZ);
+    i=(i<0)? 0 : ((i>(int)geo.nVoxelX-1)? (int)geo.nVoxelX-1 : i);
+    j=(j<0)? 0 : ((j>(int)geo.nVoxelY-1)? (int)geo.nVoxelY-1 : j);
+    k=(k<0)? 0 : ((k>(int)geo.nVoxelZ-1)? (int)geo.nVoxelZ-1 : k);
+
+    // Direction of update (eq 29), and the coordinate of the face ahead on each
+    // axis: index+1 moving up, index moving down. The voxel is kept as integer
+    // indices, which the fetch takes; the face coordinates are kept as floats
+    // (exact: integers) so no conversion is needed in the loop.
+    int sI=(ray.x<0.0f)? -1 : 1;
+    int sJ=(ray.y<0.0f)? -1 : 1;
+    int sK=(ray.z<0.0f)? -1 : 1;
+    float fX=(float)(i+(sI>0));
+    float fY=(float)(j+(sJ>0));
+    float fZ=(float)(k+(sK>0));
+
+    // Parameter of the next voxel boundary on each axis (infinite if the ray is
+    // parallel to it): the boundary at coordinate b is at b*rX+oX. Each one is
+    // computed from its plane, not by adding a step to the previous one (eq 28),
+    // which drifts in float32 over the many boundaries of a large image.
+    float rX=(ray.x!=0.0f)? 1.0f/ray.x : 0.0f;
+    float rY=(ray.y!=0.0f)? 1.0f/ray.y : 0.0f;
+    float rZ=(ray.z!=0.0f)? 1.0f/ray.z : 0.0f;
+    float oX=-source.x*rX;
+    float oY=-source.y*rY;
+    float oZ=-source.z*rZ;
+    float ax=(ray.x!=0.0f)? sycl::fma(fX,rX,oX) : INFINITY;
+    float ay=(ray.y!=0.0f)? sycl::fma(fY,rY,oY) : INFINITY;
+    float az=(ray.z!=0.0f)? sycl::fma(fZ,rZ,oZ) : INFINITY;
+
     float maxlength=sycl::sqrt(ray.x*ray.x*geo.dVoxelX*geo.dVoxelX+ray.y*ray.y*geo.dVoxelY*geo.dVoxelY+ray.z*ray.z*geo.dVoxelZ*geo.dVoxelZ);
     float sum=0.0f;
-    long Np=(imax-imin+1)+(jmax-jmin+1)+(kmax-kmin+1); // Number of intersections
-    // Go iterating over the line, intersection by intersection. If double point, no worries, 0 will be computed
-    i+=0.5f;
-    j+=0.5f;
-    k+=0.5f;
-    for (long ii=0;ii<Np;ii++){
+    float ac=am;
+    // At most one step per voxel boundary, plus slack: the loop always ends, even
+    // if rounding never quite lets a crossing reach aM. One fetch per step, before
+    // the branch on the axis crossed.
+    const int maxsteps=(int)geo.nVoxelX+(int)geo.nVoxelY+(int)geo.nVoxelZ+3;
+    for (int step=0; step<maxsteps; step++){
+        float aminc=sycl::fmin(sycl::fmin(ax,ay),az);
+        sum+=(sycl::fmin(aminc,aM)-ac)*tigreFetchPoint(tex, geo.nVoxelX, geo.nVoxelY, geo.nVoxelZ, i, j, k);
+        if (aminc>=aM)
+            break;
         if (ax==aminc){
-            sum+=(ax-ac)*tigreFetchPoint(tex, geo.nVoxelX, geo.nVoxelY, geo.nVoxelZ, i, j, k);
-            i=i+iu;
-            ac=ax;
-            ax+=axu;
+            i+=sI; fX+=(float)sI; ac=ax; ax=sycl::fma(fX,rX,oX);
         }else if(ay==aminc){
-            sum+=(ay-ac)*tigreFetchPoint(tex, geo.nVoxelX, geo.nVoxelY, geo.nVoxelZ, i, j, k);
-            j=j+ju;
-            ac=ay;
-            ay+=ayu;
-        }else if(az==aminc){
-            sum+=(az-ac)*tigreFetchPoint(tex, geo.nVoxelX, geo.nVoxelY, geo.nVoxelZ, i, j, k);
-            k=k+ku;
-            ac=az;
-            az+=azu;
+            j+=sJ; fY+=(float)sJ; ac=ay; ay=sycl::fma(fY,rY,oY);
+        }else{
+            k+=sK; fZ+=(float)sK; ac=az; az=sycl::fma(fZ,rZ,oZ);
         }
-        aminc=sycl::fmin(sycl::fmin(ax,ay),az);
     }
     detector[idx]=sum*maxlength;
 }

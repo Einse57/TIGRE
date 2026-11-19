@@ -11,10 +11,10 @@ What a split result should be (as in test_tv_low_memory.py for the CUDA build):
 - tvdenoise: only that it finishes with a finite result. Split, it differs from
   the unsplit result in the CUDA build too.
 - Ax (interpolated), Atb: the unsplit result.
-- Ax (Siddon): that it finishes with a finite result. A ray that runs exactly
-  in the plane between two pieces, or enters a piece exactly on a voxel edge,
-  is dropped by the Siddon kernel (CUDA and SYCL alike), so split Siddon
-  results can differ on a few detector pixels.
+- Ax (Siddon): the unsplit result up to rounding, since the pieces add up in a
+  different order (as in test_siddon_split.py for the CUDA build, #859). A ray
+  that runs exactly in the plane between two pieces is still dropped (CUDA and
+  SYCL alike): with pieces of 2 slices, the central detector row lies in one.
 """
 import os
 import subprocess
@@ -79,14 +79,15 @@ def unlimited(tmp_path_factory):
     return _run(tmp_path_factory.mktemp("unlimited"), None)
 
 
-def _assert_close(name, result, ref):
+def _assert_close(name, result, ref, finite_only=("tvdenoise",)):
     assert result.dtype == np.float32, (name, str(result))
     assert np.isfinite(result).all(), name
     assert result.shape == ref.shape, name
-    if name in ("tvdenoise", "AxSiddon"):
-        return  # finite only; see the module docstring
+    if name in finite_only:
+        return  # see the module docstring
     diff = np.abs(result - ref).max() / np.abs(ref).max()
-    assert diff < (5e-2 if name in ("minTV", "AwminTV") else 1e-5), (name, diff)
+    tolerance = {"minTV": 5e-2, "AwminTV": 5e-2, "AxSiddon": 1e-4}.get(name, 1e-5)
+    assert diff < tolerance, (name, diff)
 
 
 def _assert_out_of_memory(name, result):
@@ -114,9 +115,10 @@ def test_many_image_pieces(tmp_path, unlimited):
 
 def test_too_little_memory_raises_out_of_memory(tmp_path, unlimited):
     # 1 MB: less than Atb's smallest working set too (projection buffers and one slice).
-    # Ax still fits its buffers and one slice, in pieces of 2 slices.
+    # Ax still fits its buffers and one slice, in pieces of 2 slices; the central detector
+    # row then runs in the plane between two pieces, which Siddon drops.
     result = _run(tmp_path, 1)
     for name in ("minTV", "AwminTV", "tvdenoise", "Atb"):
         _assert_out_of_memory(name, result[name])
     for name in ("Ax", "AxSiddon"):
-        _assert_close(name, result[name], unlimited[name])
+        _assert_close(name, result[name], unlimited[name], finite_only=("AxSiddon",))
