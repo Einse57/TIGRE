@@ -54,14 +54,14 @@
 #include <cuda.h>
 #include "ray_interpolated_projection_parallel.hpp"
 #include "TIGRE_common.hpp"
+#include "tigre_release_on_error.hpp"
 #include <math.h>
 
 #define cudaCheckErrors(msg) \
 do { \
         cudaError_t __err = cudaGetLastError(); \
         if (__err != cudaSuccess) { \
-                mexPrintf("%s \n",msg);\
-                mexErrMsgIdAndTxt("TIGRE:Ax:interpolated_parallel",cudaGetErrorString(__err));\
+                tigreCudaError("TIGRE:Ax:interpolated_parallel", msg, cudaGetErrorString(__err));\
         } \
 } while (0)
     
@@ -96,7 +96,7 @@ do { \
  *
  *
  **/
-void CreateTextureParallelInterp(float* image,Geometry geo,cudaArray** d_cuArrTex, cudaTextureObject_t *texImage,cudaStream_t* stream);
+void CreateTextureParallelInterp(float* image,Geometry geo,cudaArray** d_cuArrTex, cudaTextureObject_t *texImage,cudaStream_t* stream, cudaMemcpyKind kind);
 __constant__ Point3D projParamsArrayDev[4*PROJ_PER_BLOCK];  // Dev means it is on device
 __constant__ float projFloatsArrayDev[2*PROJ_PER_BLOCK];  // Dev means it is on device
 
@@ -192,19 +192,34 @@ __global__ void kernelPixelDetector_parallel_interpolated( Geometry geo,
 
 
 
-int interpolation_projection_parallel(float  *  img, Geometry geo, float** result,float const * const angles,int nangles, const GpuIds& gpuids){
+int interpolation_projection_parallel(float  *  img, Geometry geo, float** result,float const * const angles,int nangles, const GpuIds& gpuids, bool gpuData){
+    // With GPU data the copies to the caller's array are device-to-device and
+    // asynchronous, so they go on the compute stream: that orders them with the
+    // kernels that reuse the double-buffered projections. (Copies to pageable
+    // host memory are synchronous, so the copy stream is safe for them.)
+    const int copyStream = gpuData ? 0 : 1;
+    // This projector runs on the current device; GPU data must be used on its own.
+    if (gpuData) cudaSetDevice(gpuids[0]);
+    const cudaMemcpyKind kindOut = gpuData ? cudaMemcpyDeviceToDevice : cudaMemcpyDeviceToHost;
     
     
     
-    size_t num_bytes = geo.nDetecU*geo.nDetecV *PROJ_PER_BLOCK* sizeof(float);
+    size_t num_bytes = (size_t)geo.nDetecU*geo.nDetecV *PROJ_PER_BLOCK* sizeof(float);
     float** dProjection=(float **)malloc(2*sizeof(float *));
+    dProjection[0] = 0; dProjection[1] = 0;
+    // If a CUDA error raises (Python build) before the end of this function,
+    // onError releases what it holds; see tigre_release_on_error.hpp.
+    tigre::ReleaseOnError onError;
+    onError.add([dProjection]{ cudaFree(dProjection[0]); cudaFree(dProjection[1]); free(dProjection); });
     for (int i = 0; i < 2; ++i){
         cudaMalloc((void**)&dProjection[i],   num_bytes);
         cudaCheckErrors("cudaMalloc projections fail");
     }
     // allocate streams for memory and compute
     int nStreams=2;
-    cudaStream_t* stream=(cudaStream_t*)malloc(nStreams*sizeof(cudaStream_t));;
+    cudaStream_t* stream=(cudaStream_t*)malloc(nStreams*sizeof(cudaStream_t));
+    memset(stream, 0, nStreams*sizeof(cudaStream_t));
+    onError.add([stream, nStreams]{ for (int s = 0; s < nStreams; s++) if (stream[s]) cudaStreamDestroy(stream[s]); free(stream); });
     
     for (int i = 0; i < 2; ++i){
         cudaStreamCreate(&stream[i]);
@@ -216,8 +231,10 @@ int interpolation_projection_parallel(float  *  img, Geometry geo, float** resul
     cudaArray **d_cuArrTex = 0;
     texImg =(cudaTextureObject_t*)malloc(1*sizeof(cudaTextureObject_t));
     d_cuArrTex =(cudaArray**)malloc(1*sizeof(cudaArray*));
+    texImg[0] = 0; d_cuArrTex[0] = 0;
+    onError.add([texImg, d_cuArrTex]{ if (texImg[0]) cudaDestroyTextureObject(texImg[0]); if (d_cuArrTex[0]) cudaFreeArray(d_cuArrTex[0]); free(texImg); free(d_cuArrTex); });
     
-    CreateTextureParallelInterp(img,geo,&d_cuArrTex[0], &texImg[0],stream);
+    CreateTextureParallelInterp(img,geo,&d_cuArrTex[0], &texImg[0],stream,(gpuData ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice));
     cudaCheckErrors("Texture allocation fail");
     //Done! Image put into texture memory.
     
@@ -225,10 +242,12 @@ int interpolation_projection_parallel(float  *  img, Geometry geo, float** resul
     
     Point3D source, deltaU, deltaV, uvOrigin;
     
-    Point3D* projParamsArrayHost;
+    Point3D* projParamsArrayHost = 0;
     cudaMallocHost((void**)&projParamsArrayHost,4*PROJ_PER_BLOCK*sizeof(Point3D));
-    float* projFloatsArrayHost;
+    onError.add([projParamsArrayHost]{ cudaFreeHost(projParamsArrayHost); });
+    float* projFloatsArrayHost = 0;
     cudaMallocHost((void**)&projFloatsArrayHost,2*PROJ_PER_BLOCK*sizeof(float));
+    onError.add([projFloatsArrayHost]{ cudaFreeHost(projFloatsArrayHost); });
     
     // 16x16 gave the best performance empirically
     // Funnily that makes it compatible with most GPUs.....
@@ -269,18 +288,25 @@ int interpolation_projection_parallel(float  *  img, Geometry geo, float** resul
         cudaMemcpyToSymbolAsync(projParamsArrayDev, projParamsArrayHost, sizeof(Point3D)*4*PROJ_PER_BLOCK,0,cudaMemcpyHostToDevice,stream[0]);
         cudaMemcpyToSymbolAsync(projFloatsArrayDev, projFloatsArrayHost, sizeof(float)*2*PROJ_PER_BLOCK,0,cudaMemcpyHostToDevice,stream[0]);
         cudaStreamSynchronize(stream[0]);
+        // The kernel below overwrites the buffer whose copy-out (of batch i-2) went on
+        // stream[1]: make sure it has finished. Today that copy is to pageable host
+        // memory and done when cudaMemcpyAsync returns, but nothing guarantees it (#860).
+        cudaStreamSynchronize(stream[1]);
         
         kernelPixelDetector_parallel_interpolated<<<numBlocks,threadsPerBlock,0,stream[0]>>>(geo,dProjection[(int)i%2==0],i,nangles,texImg[0]);
         // copy result to host
         if (i>0)
-             cudaMemcpyAsync(result[i*PROJ_PER_BLOCK-PROJ_PER_BLOCK],dProjection[(int)i%2!=0], num_bytes, cudaMemcpyDeviceToHost,stream[1]);    
+             cudaMemcpyAsync(result[i*PROJ_PER_BLOCK-PROJ_PER_BLOCK],dProjection[(int)i%2!=0], num_bytes, kindOut,stream[copyStream]);    
     }
     cudaDeviceSynchronize();
     
     int lastangles=nangles-(i-1)*PROJ_PER_BLOCK;
-    cudaMemcpyAsync(result[(i-1)*PROJ_PER_BLOCK],dProjection[(int)(i-1)%2==0], lastangles*geo.nDetecV*geo.nDetecU*sizeof(float), cudaMemcpyDeviceToHost,stream[1]);
+    cudaMemcpyAsync(result[(i-1)*PROJ_PER_BLOCK],dProjection[(int)(i-1)%2==0], (size_t)lastangles*geo.nDetecV*geo.nDetecU*sizeof(float), kindOut,stream[copyStream]);
 
     
+    if (gpuData) cudaDeviceSynchronize();  // the caller reads the result as soon as we return
+    cudaCheckErrors("Projection fail");
+    onError.dismiss();  // from here on the function releases everything itself
     cudaDestroyTextureObject(texImg[0]);
     cudaFreeArray(d_cuArrTex[0]);
     free(texImg); texImg = 0;
@@ -410,7 +436,7 @@ void computeDeltas_parallel(Geometry geo, float alpha,unsigned int i, Point3D* u
     
     *source=S;
 }
-void CreateTextureParallelInterp(float* image,Geometry geo,cudaArray** d_cuArrTex, cudaTextureObject_t *texImage,cudaStream_t* stream){    //size_t size_image=geo.nVoxelX*geo.nVoxelY*geo.nVoxelZ;
+void CreateTextureParallelInterp(float* image,Geometry geo,cudaArray** d_cuArrTex, cudaTextureObject_t *texImage,cudaStream_t* stream, cudaMemcpyKind kind){    //size_t size_image=geo.nVoxelX*geo.nVoxelY*geo.nVoxelZ;
     
     
     const cudaExtent extent = make_cudaExtent(geo.nVoxelX, geo.nVoxelY, geo.nVoxelZ);
@@ -426,8 +452,14 @@ void CreateTextureParallelInterp(float* image,Geometry geo,cudaArray** d_cuArrTe
     copyParams.srcPtr   = make_cudaPitchedPtr((void *)image, extent.width*sizeof(float), extent.width, extent.height);
     copyParams.dstArray = d_cuArrTex[0];
     copyParams.extent   = extent;
-    copyParams.kind     = cudaMemcpyHostToDevice;
+    copyParams.kind     = kind;
     cudaMemcpy3DAsync(&copyParams,stream[1]);
+    // Wait for the copy: the kernels run on stream[0] and would otherwise read
+    // the texture while it is still being filled. This raced always for GPU
+    // arrays (device-to-device copies are fully asynchronous), and for host
+    // data whenever the copy outlived the call (pinned memory, or the last
+    // DMA chunk of a pageable copy).
+    cudaStreamSynchronize(stream[1]);
     
     
     //Array creation End

@@ -8,13 +8,77 @@ thank you.
 ## Unreleased
 
 ### Added
+- Python: `tigre.Ax` and `tigre.Atb` take PyTorch CUDA tensors and CuPy arrays, and return
+  the same kind of array on the same GPU, without copying through host memory. This uses the
+  array's GPU only; if `gpuids` names other GPUs, the data goes through the host as before.
+- PyTorch bindings: CUDA tensors stay on the GPU (see above). If TIGRE runs out of GPU memory,
+  the bindings empty PyTorch's memory cache and try once more.
 - SYCL build (`TIGRE_SYCL=1`) of all projectors, backprojectors, TV/PICCS regularisers
   and noise generation, compiled with the oneAPI DPC++ compiler instead of CUDA.
 
 ### Changed
+- Python: a CUDA error now raises `RuntimeError` (with the CUDA message) instead of ending the
+  whole Python process with `exit(1)`. Ax and Atb release the GPU memory, streams, textures and
+  page-locked memory the failed call held, so TIGRE can be used again in the same process.
+  In Python, TIGRE no longer calls `cudaDeviceReset()` after an error, which would destroy every
+  other GPU allocation in the process (e.g. PyTorch's). MATLAB behaviour is unchanged (#853).
+- "One (or more) of your GPUs is being heavily used by another program" (less than half of the
+  GPU memory free) is now a warning instead of an error, in Python and MATLAB. In Python,
+  TIGRE's warnings are now Python `RuntimeWarning`s, shown once, instead of text printed on every
+  call.
+- PyTorch bindings: `At` and the gradient of `A` now use the `matched` backprojector, the
+  closest to the transpose of `Ax`; before, they used FDK weights, so gradients through
+  TIGRE were further from the true ones. Pass `backprojection_type="FDK"` to
+  `create_pytorch_operator` (or `A`/`At`) to get the old behaviour.
 - Wheels are built for Python 3.11 to 3.14 (3.14 was missing from 3.2.0), on
   `manylinux_2_28`: they need glibc 2.28 or newer (e.g. RHEL/AlmaLinux 8, Ubuntu 18.10+);
   older Linux distributions should build from source.
+
+### Fixed
+- `tvdenoise` (Python; `im3DDenoise` in MATLAB, also used by FISTA and other TV algorithms)
+  could loop forever when the image did not fit on the GPU and was split: for some amounts of
+  free memory it computed a buffer of 0 slices. `minTV`/`AwminTV` stopped with "Assertion
+  Failed. Logic behind splitting flawed!" when free memory was low. All three now split
+  correctly whenever the smallest piece fits, and raise "out of memory" otherwise (#858).
+- `minTV`, `AwminTV`, `tvdenoise` and `minPICCS` now release everything they hold when they
+  stop with an error (e.g. out of memory), as `Ax`/`Atb` do since #857. Before, an error left
+  the caller's arrays registered as pinned memory; on Linux the next call, with a new array at
+  the same address, then returned all zeros without any error, or failed with "part or all of
+  the requested memory range is already mapped". A failed GPU allocation in these functions now
+  reports "out of memory" instead of "invalid argument".
+- MATLAB `Compile`: compiles for the GPU architectures the installed `nvcc` supports, as it
+  reports them (`nvcc --list-gpu-arch`), like the Python build. The fixed list asked CUDA
+  12.2-12.7 for `compute_120`, which needs 12.8, and compilation failed.
+- Cone-beam `Ax` and `Atb` with almost no free GPU memory (e.g. when PyTorch holds the GPU):
+  `Atb` killed the process with an integer division by zero, and `Ax` tried the whole image
+  and failed. Both now raise "out of memory" with how much memory they need, before
+  allocating anything (Python: `RuntimeError`, which the PyTorch bindings retry after
+  emptying PyTorch's cache; MATLAB: an error).
+- `Ax` with `"interpolated"` (cone and parallel) and parallel-beam Siddon started projecting
+  without waiting for the image to finish copying to the GPU, so the first block of 8-9
+  projections could be computed from a partly copied image. Seen with GPU arrays; with NumPy
+  input it could happen for cone-beam interpolated when the image was split (did not fit on
+  the GPU), as the image is then page-locked and its copy fully asynchronous.
+- `Atb` with `backprojection_type="matched"` (used by the Krylov algorithms, e.g. CGLS, LSQR)
+  could return parts of the image as zeros when the image did not fit on the GPU in one piece:
+  copying a piece out raced with clearing the GPU buffer for the next piece. Python and MATLAB.
+- PyTorch bindings: `create_pytorch_operator(geo, angles)` without `gpuids`, and `gpuids` given
+  as a list of device numbers (`["0"]`), failed: TIGRE needs a `GpuIds`. Both work now.
+- Atb leaked texture objects on every call (all but two of every 32-angle block), until CUDA
+  refused to create more, about a million later: "Texture object creation fail ... out of
+  memory" after a few hundred iterations however much memory was free. Ax leaked one per image
+  split (#617, #851).
+- Python: `Atb`, `minTV`, `AwminTV`, `minPICCS`, `tvdenoise` and the noise generators no longer
+  leak their small list of GPU ids on every call.
+- `load_head_phantom` could not find `head.mat` after `pip install .` on Linux or after
+  `pip install --user`: pip puts the file in `<prefix>/data`, which was not searched (#850).
+- Large problems: several sizes were computed with 32-bit integers and wrapped around. Matched
+  `Atb` failed or left part of the image unscaled above 2^31 voxels on one GPU (e.g. 1300³);
+  parallel-beam `Atb` could not allocate an image above 2^31 voxels. On Windows, where `long`
+  is 32-bit: Python `Ax` allocated too small a buffer once the projections reached 16 GiB
+  (e.g. 2048² x 1024 angles) and wrote past its end; `minTV`, `AwminTV`, `tvdenoise` and
+  `minPICCS` got their sizes and offsets wrong above 2^31 voxels. Above ~15,400² detector pixels,
+  `Ax` copy sizes overflowed too. All now use 64-bit sizes.
 
 ## 3.2.0 (2026-11-11)
 

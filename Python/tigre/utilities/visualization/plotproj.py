@@ -8,9 +8,36 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 class plotProj:
-    """Plot projections with (views,), (views, 1) or (views, 3) angles.
+    """Show projections as an animation.
 
-    ZYZ angle titles display alpha and apply only to projection views (T).
+    Available as ``tigre.plotproj`` and ``tigre.plotProj``.
+
+    Parameters
+    ----------
+    proj : numpy.ndarray
+        Projections, shape ``(angle, v, u)``.
+    angles : numpy.ndarray, optional
+        Projection angles, shape ``(N,)``, ``(N, 1)`` or ``(N, 3)``, to show in
+        the titles (the first angle of ZYZ angles). Only used with ``dim="t"``.
+    dim : {"t", "u", "v"}, optional
+        Axis to move along (case does not matter): ``"t"`` steps through the
+        projections (default); ``"v"`` and ``"u"`` show sinograms.
+    slice : int, optional
+        Show only this slice, as a still image, instead of an animation.
+    step : int, optional
+        Show every ``step``-th slice. Default 1.
+    savegif : str, optional
+        Also save the animation as a GIF with this file name.
+    colormap : str, optional
+        Matplotlib colour map. Default ``"gray"``.
+    clims : sequence of two floats, optional
+        Display range ``(min, max)``. Default: the data's minimum and maximum.
+    show_plot : bool, optional
+        Call ``plt.show()``. Default: decided from the Matplotlib backend.
+
+    See Also
+    --------
+    plotSinogram
     """
     # NOTE: type help(plotImg) after importing in order to get a readable manual.
     (
@@ -199,6 +226,8 @@ class plotProj:
             repeat_delay=1000,
             frames=len(range(0, dim[self.dimint])[:: self.step]),
         )
+        # keep the animation alive as long as its figure (see plotimg.py)
+        fig._tigre_animation = self._animation
         if self.savegif is not None:
             self._animation.save(self.savegif, writer="pillow")
             self._show()
@@ -247,14 +276,16 @@ class plotProj:
 
 
 def plotSinogram(proj, posV, show_plot=None):  # noqa: N803
-    """
-    plotSinogram(proj, posV)
-        plots sinogram at V=posV
+    """Show the sinogram of one detector row.
 
     Parameters
     ----------
-    proj : Any 3D numpy array
-    posV : integer. in range of 0:proj.shape[1].
+    proj : numpy.ndarray
+        Projections, shape ``(angle, v, u)``.
+    posV : int
+        Detector row, from 0 to ``proj.shape[1] - 1``.
+    show_plot : bool, optional
+        Call ``plt.show()``. Default: decided from the Matplotlib backend.
     """
     plotProj(proj, dim="V", slice=posV, show_plot=show_plot)
 

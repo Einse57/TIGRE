@@ -52,6 +52,7 @@
 #include "voxel_backprojection_parallel.hpp"
 
 #include "TIGRE_common.hpp"
+#include "tigre_release_on_error.hpp"
 #include <math.h>
 
 // https://stackoverflow.com/questions/16282136/is-there-a-cuda-equivalent-of-perror
@@ -59,8 +60,7 @@
 do { \
         cudaError_t __err = cudaGetLastError(); \
         if (__err != cudaSuccess) { \
-                mexPrintf("%s \n",msg);\
-                mexErrMsgIdAndTxt("CBCT:CUDA:Atb",cudaGetErrorString(__err));\
+                tigreCudaError("CBCT:CUDA:Atb", msg, cudaGetErrorString(__err));\
         } \
 } while (0)
     
@@ -92,7 +92,7 @@ do { \
      *
      *
      **/
-void CreateTextureParallel( float* projectiondata,Geometry geo,cudaArray** d_cuArrTex,unsigned int nangles, cudaTextureObject_t *texImage,cudaStream_t* stream, bool allocate);
+void CreateTextureParallel( float* projectiondata,Geometry geo,cudaArray** d_cuArrTex,unsigned int nangles, cudaTextureObject_t *texImage,cudaStream_t* stream, bool allocate, cudaMemcpyKind kind);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // RB, 10/31/2016: Add constant memory arrays to store parameters for all projections to be analyzed during a single kernel call
@@ -283,7 +283,7 @@ __global__ void kernelPixelBackprojection_parallel(const Geometry geo, float* im
 //      Description:    Main host function for FDK backprojection (invokes the kernel)
 //______________________________________________________________________________
 
-int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* result,float const * const alphas, int nalpha, const GpuIds& gpuids)
+int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* result,float const * const alphas, int nalpha, const GpuIds& gpuids, bool gpuData)
 {
     if (gpuids.GetLength() == 0) {
         cudaSetDevice(0);
@@ -298,7 +298,12 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
     //If it is the first time, lets make sure our image is zeroed.
     int nStreamDevice=2;
     int nStreams=nStreamDevice;
-    cudaStream_t* stream=(cudaStream_t*)malloc(nStreams*sizeof(cudaStream_t));;
+    // If a CUDA error raises (Python build) before the end of this function,
+    // onError releases what it holds; see tigre_release_on_error.hpp.
+    tigre::ReleaseOnError onError;
+    cudaStream_t* stream=(cudaStream_t*)malloc(nStreams*sizeof(cudaStream_t));
+    memset(stream, 0, nStreams*sizeof(cudaStream_t));
+    onError.add([stream, nStreams]{ for (int s = 0; s < nStreams; s++) if (stream[s]) cudaStreamDestroy(stream[s]); free(stream); });
     
     for (int i = 0; i < nStreamDevice; ++i){
         cudaStreamCreate(&stream[i]);
@@ -312,31 +317,52 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
 #if CUDART_VERSION >= 9020
     cudaDeviceGetAttribute(&isHostRegisterSupported,cudaDevAttrHostRegisterSupported,gpuids[0]);
 #endif
+    if (gpuData) isHostRegisterSupported = 0;  // GPU memory: nothing to pin
     if (isHostRegisterSupported){
         cudaHostRegister(projections, (size_t)geo.nDetecU*(size_t)geo.nDetecV*(size_t)nalpha*(size_t)sizeof(float),cudaHostRegisterPortable);
+        // The caller's array: left registered, the next call with it would fail.
+        onError.add([projections]{ cudaHostUnregister(projections); });
     }
     cudaCheckErrors("Error pinning memory");
     
     
     // Allocate result image memory
-    size_t num_bytes = geo.nVoxelX*geo.nVoxelY*geo.nVoxelZ * sizeof(float);
-    float* dimage;
-    cudaMalloc((void**)&dimage, num_bytes);
+    size_t num_bytes = (size_t)geo.nVoxelX*geo.nVoxelY*geo.nVoxelZ * sizeof(float);
+    float* dimage = 0;
+    if (gpuData) {
+        dimage = result;  // already on the GPU: write the image straight into it
+    } else {
+        cudaMalloc((void**)&dimage, num_bytes);
+        onError.add([dimage]{ cudaFree(dimage); });
+    }
     cudaMemset(dimage,0,num_bytes); cudaDeviceSynchronize(); // built with --default-stream=per-thread: the memset is not ordered with our streams
     cudaCheckErrors("cudaMalloc fail");
     
     
-    Point3D* projParamsArrayHostParallel;
+    Point3D* projParamsArrayHostParallel = 0;
     cudaMallocHost((void**)&projParamsArrayHostParallel,6*PROJ_PER_KERNEL*sizeof(Point3D));
-    float* projSinCosArrayHostParallel;
+    onError.add([projParamsArrayHostParallel]{ cudaFreeHost(projParamsArrayHostParallel); });
+    float* projSinCosArrayHostParallel = 0;
     cudaMallocHost((void**)&projSinCosArrayHostParallel,3*PROJ_PER_KERNEL*sizeof(float));
+    onError.add([projSinCosArrayHostParallel]{ cudaFreeHost(projSinCosArrayHostParallel); });
     
     
     // Texture buffer objects
     cudaTextureObject_t *texProj;
     cudaArray **d_cuArrTex;
     texProj =(cudaTextureObject_t*)malloc(2*sizeof(cudaTextureObject_t));
+    // Zeroed so CreateTexture can tell an empty slot from one holding a texture
+    // object it must destroy first.
+    memset(texProj, 0, 2*sizeof(cudaTextureObject_t));
     d_cuArrTex =(cudaArray**)malloc(2*sizeof(cudaArray*));
+    memset(d_cuArrTex, 0, 2*sizeof(cudaArray*));
+    onError.add([texProj, d_cuArrTex]{
+        for (int s = 0; s < 2; s++) {
+            if (texProj[s]) cudaDestroyTextureObject(texProj[s]);
+            if (d_cuArrTex[s]) cudaFreeArray(d_cuArrTex[s]);
+        }
+        free(texProj); free(d_cuArrTex);
+    });
 
     
     
@@ -361,6 +387,7 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
     
     float ** partial_projection=(float**)malloc(current_proj_split_size*sizeof(float*));
     size_t * proj_split_size=(size_t*)malloc(current_proj_split_size*sizeof(size_t*));
+    onError.add([partial_projection, proj_split_size]{ free(partial_projection); free(proj_split_size); });
     
     for(unsigned int proj_block_split=0; proj_block_split<proj_split_overlap_number;proj_block_split++){
         // Crop the last one, as its likely its not completely divisible.
@@ -386,7 +413,8 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
                 proj_split_size[proj_block_split],
                 &texProj   [(proj_block_split%2)],
                 stream,
-                (proj_block_split<2));// Only allocate if its the first 2 calls
+                (proj_block_split<2),// Only allocate if its the first 2 calls
+                (gpuData ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice));
         
   
         cudaStreamSynchronize(stream[0+1]);
@@ -476,8 +504,10 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
         //////////////////////////////////////////////////////////////////////////////////////
     }
     cudaDeviceSynchronize();
-    cudaMemcpy(result, dimage, num_bytes, cudaMemcpyDeviceToHost);
+    if (!gpuData)
+        cudaMemcpy(result, dimage, num_bytes, cudaMemcpyDeviceToHost);
     cudaCheckErrors("cudaMemcpy result fail");
+    onError.dismiss();  // from here on the function releases everything itself
     
     free(partial_projection);
     free(proj_split_size);
@@ -495,7 +525,8 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
     cudaFreeHost(projSinCosArrayHostParallel);
     cudaFreeHost(projParamsArrayHostParallel);
     
-    cudaFree(dimage);
+    if (!gpuData)
+        cudaFree(dimage);
     if (isHostRegisterSupported){
         cudaHostUnregister(projections);
     }
@@ -583,7 +614,7 @@ void computeDeltasCubeParallel(Geometry geo, int i, Point3D* xyzorigin, Point3D*
 
     
 }  // END computeDeltasCube
-void CreateTextureParallel(float* projectiondata,Geometry geo,cudaArray** d_cuArrTex,unsigned int nangles, cudaTextureObject_t *texImage,cudaStream_t* stream, bool alloc)
+void CreateTextureParallel(float* projectiondata,Geometry geo,cudaArray** d_cuArrTex,unsigned int nangles, cudaTextureObject_t *texImage,cudaStream_t* stream, bool alloc, cudaMemcpyKind kind)
 {
         //cudaArray Descriptor
 #if IS_FOR_MATLAB_TIGRE
@@ -604,7 +635,7 @@ void CreateTextureParallel(float* projectiondata,Geometry geo,cudaArray** d_cuAr
         copyParams.srcPtr   = make_cudaPitchedPtr((void *)projectiondata, extent.width*sizeof(float), extent.width, extent.height);
         copyParams.dstArray = d_cuArrTex[0];
         copyParams.extent   = extent;
-        copyParams.kind     = cudaMemcpyHostToDevice;
+        copyParams.kind     = kind;
         cudaMemcpy3DAsync(&copyParams,stream[0+1]);
         cudaCheckErrors("Texture memory data copy fail");
         //Array creation End
@@ -621,6 +652,11 @@ void CreateTextureParallel(float* projectiondata,Geometry geo,cudaArray** d_cuAr
         texDescr.addressMode[1] = cudaAddressModeBorder;
         texDescr.addressMode[2] = cudaAddressModeBorder;
         texDescr.readMode = cudaReadModeElementType;
+        // Each projection block (or image split) creates a new texture object in this
+        // slot. Destroy the one it replaces, otherwise every call leaks one per block
+        // until cudaCreateTextureObject fails with "out of memory" (#617). The kernels
+        // that used it have finished: its array has just been overwritten above.
+        if (texImage[0]) cudaDestroyTextureObject(texImage[0]);
         cudaCreateTextureObject(&texImage[0], &texRes, &texDescr, NULL);
         cudaCheckErrors("Texture object creation fail");
     
