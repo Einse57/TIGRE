@@ -8,8 +8,8 @@ subprocess, since the limit is read from the environment.
 What a split result should be (as in test_tv_low_memory.py for the CUDA build):
 - minTV/AwminTV: close to the unsplit result; each piece is normalised by its
   own gradient norm, as in the CUDA build.
-- tvdenoise: only that it finishes with a finite result. Split, it differs from
-  the unsplit result in the CUDA build too.
+- tvdenoise: the unsplit result (every voxel's update depends only on its
+  neighbours; split halos as in #863, test_tv_low_memory.py for the CUDA build).
 - Ax (interpolated), Atb: the unsplit result.
 - Ax (Siddon): the unsplit result up to rounding, since the pieces add up in a
   different order (as in test_siddon_split.py for the CUDA build, #859). A ray
@@ -79,14 +79,14 @@ def unlimited(tmp_path_factory):
     return _run(tmp_path_factory.mktemp("unlimited"), None)
 
 
-def _assert_close(name, result, ref, finite_only=("tvdenoise",)):
+def _assert_close(name, result, ref, finite_only=()):
     assert result.dtype == np.float32, (name, str(result))
     assert np.isfinite(result).all(), name
     assert result.shape == ref.shape, name
     if name in finite_only:
         return  # see the module docstring
     diff = np.abs(result - ref).max() / np.abs(ref).max()
-    tolerance = {"minTV": 5e-2, "AwminTV": 5e-2, "AxSiddon": 1e-4}.get(name, 1e-5)
+    tolerance = {"minTV": 5e-2, "AwminTV": 5e-2, "AxSiddon": 1e-4, "tvdenoise": 1e-6}.get(name, 1e-5)
     assert diff < tolerance, (name, diff)
 
 
