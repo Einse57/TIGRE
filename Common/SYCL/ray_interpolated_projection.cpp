@@ -231,6 +231,11 @@ int interpolation_projection(float* img, Geometry geo, float** result,float cons
             size_t mem_free=mem_GPU_global-4*PROJ_PER_BLOCK*mem_proj;
             splits=mem_image/mem_free+1;// Ceil of the truncation
             if (splits>geo.nVoxelZ) splits=geo.nVoxelZ;  // at least one slice per piece
+            // The pieces have ceil(nVoxelZ/splits) slices. Fewer pieces of that size can
+            // cover the image (e.g. 64 slices in 12 pieces: 11 of 6 slices); the pieces
+            // beyond would have a negative (wrapped around) number of slices.
+            const unsigned int slices_per_piece=(geo.nVoxelZ+splits-1)/splits;
+            splits=(geo.nVoxelZ+slices_per_piece-1)/slices_per_piece;
         }
         Geometry* geoArray = (Geometry*)malloc(splits*sizeof(Geometry));
         splitImageInterp(splits,geo,geoArray,nangles);
