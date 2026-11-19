@@ -270,7 +270,12 @@ static inline void kernelPixelDetector(const Geometry& geo,
 }
 
 
-int siddon_ray_projection(float* img, Geometry geo, float** result,float const * const angles,int nangles, const GpuIds& gpuids){
+int siddon_ray_projection(float* img, Geometry geo, float** result,float const * const angles,int nangles, const GpuIds& gpuids, bool gpuData){
+    // GPU arrays (#857): the pointers would be CUDA device memory, which a SYCL device
+    // cannot read. tigre.Ax and tigre.Atb pass such arrays through the host instead.
+    if (gpuData) {
+        mexErrMsgIdAndTxt("Ax:Siddon_projection:GPUdata","GPU arrays (PyTorch CUDA tensors, CuPy arrays) are not supported by the SYCL build: pass host (NumPy) arrays.\n");
+    }
     // Prepare for MultiGPU
     int deviceCount = gpuids.GetLength();
     if (deviceCount == 0) {

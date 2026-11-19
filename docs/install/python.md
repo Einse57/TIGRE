@@ -192,7 +192,10 @@ otherwise the remaining SYCL devices (such as the CPU). `gpuids` index into that
 list, and `ONEAPI_DEVICE_SELECTOR` filters it as usual. All projectors,
 backprojectors, TV/PICCS regularisers and `CTnoise.add` are available.
 `CTnoise.add` uses a different random number generator than the CUDA build, so
-its values differ for the same input.
+its values differ for the same input. PyTorch CUDA tensors and CuPy arrays passed
+to `tigre.Ax` and `tigre.Atb` are copied through host memory, since SYCL devices
+cannot read CUDA memory; the result comes back as the same kind of array, on the
+same GPU.
 
 Tested on an Intel Xeon processor with the Intel OpenCL CPU runtime
 (oneAPI 2025.2, Linux), and on an Intel Arc 140T GPU through Level Zero and an

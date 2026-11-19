@@ -603,7 +603,7 @@ def _sycl_extension(ext):
     if "Common/CUDA/TIGRE_common.cpp" not in sources:
         sources.insert(0, "Common/CUDA/TIGRE_common.cpp")
     ext.sources = sources + ["Common/SYCL/tigre_sycl.cpp"]
-    ext.define_macros = define_macros
+    ext.define_macros = define_macros + [("TIGRE_SYCL_BUILD", "1")]
     ext.library_dirs = []
     ext.libraries = []
     ext.runtime_library_dirs = []
