@@ -8,7 +8,7 @@ Arc Pro B50 discrete GPU, and the CPUs of the two machines below.
 **Hardware and software:**
 - **Laptop:** Intel Core Ultra 9 285H, with an Intel Arc 140T integrated GPU (GPU driver 32.0.101.9033, Level Zero 1.17.39500+2); 64 GB RAM.
 - **Desktop:** Intel Core Ultra 7 265F, with an Intel Arc Pro B50 discrete GPU, 16 GB (GPU driver 32.0.101.8976, Level Zero 1.15.39183+4); 64 GB RAM.
-- **Both:** Windows 11 Pro 26H2 (build 26300); Intel OpenCL CPU runtime 2025.2.0 (driver 2025.20.6.0.04); oneAPI DPC++/C++ 2025.2.0 (`icx`, conda-forge); Python 3.12.16, NumPy 2.2.6; a build of commit 6b45fe1 on each machine.
+- **Both:** Windows 11 Pro 26H2 (build 26300); Intel OpenCL CPU runtime 2025.2.0 (driver 2025.20.6.0.04); oneAPI DPC++/C++ 2025.2.0 (`icx`, conda-forge); Python 3.12.16, NumPy 2.2.6; a build of commit 51e8dfd on the laptop and of commit 538033f on the desktop (538033f changes only the CI workflow, so the TIGRE code is the same).
 
 **Method:** on each machine, the GPU and the CPU device use the same build and the same inputs, and
 the device is chosen with `ONEAPI_DEVICE_SELECTOR` (`level_zero:0` or `opencl:cpu`). Each run is a
@@ -31,35 +31,35 @@ Second call, median (min–max) of runs 2–5, in seconds:
 
 | Problem | Operation | Arc 140T | Core Ultra 9 285H | Arc Pro B50 | Core Ultra 7 265F |
 |---|---|---:|---:|---:|---:|
-| Small | Ax | 0.00119 (0.00118–0.00163) | 0.00254 (0.00251–0.00269) | 0.000922 (0.000913–0.000927) | 0.00354 (0.00173–0.00449) |
-| Small | Atb | 0.00131 (0.00124–0.00133) | 0.00211 (0.00185–0.00331) | 0.00106 (0.000957–0.00109) | 0.00236 (0.00137–0.00357) |
-| Small | FDK | 0.00322 (0.00274–0.00366) | 0.00374 (0.00348–0.00478) | 0.00304 (0.00287–0.00328) | 0.00446 (0.00345–0.00575) |
-| Small | minTV, 10 it. | 0.00247 (0.00132–0.00402) | 0.0026 (0.00254–0.00267) | 0.000864 (0.000861–0.000875) | 0.00436 (0.00262–0.00648) |
-| 128³ | Ax | 0.023 (0.0218–0.0238) | 0.11 (0.106–0.125) | 0.0134 (0.0123–0.0139) | 0.0625 (0.0606–0.0643) |
-| 128³ | Atb | 0.023 (0.0207–0.0257) | 0.121 (0.116–0.135) | 0.0127 (0.0125–0.0133) | 0.0759 (0.0708–0.0824) |
-| 128³ | FDK | 0.0387 (0.0338–0.0395) | 0.142 (0.132–0.171) | 0.0234 (0.0231–0.0246) | 0.0846 (0.0831–0.0872) |
-| 128³ | minTV, 10 it. | 0.022 (0.0211–0.0228) | 0.021 (0.0209–0.0216) | 0.00583 (0.00562–0.00698) | 0.0156 (0.0146–0.0158) |
-| Large, 4.25 GiB | Ax | 2.4 (2.33–2.6) | 3.54 (3.42–3.73) | 1.58 (1.57–1.6) | 2.8 (2.78–2.82) |
-| Large, 4.25 GiB | Atb | 2.7 (2.65–2.73) | 8.92 (8.81–8.98) | 1.49 (1.48–1.5) | 6.93 (6.81–6.95) |
-| Large, 4.25 GiB | FDK | 2.6 (2.5–2.73) | 8.91 (8.76–9.15) | 1.51 (1.49–1.55) | 7.83 (7.78–7.9) |
-| Large, 4.25 GiB | minTV, 10 it. | 11.8 (11.6–12.1) | 15.4 (15.2–15.5) | 3.46 (3.43–3.51) | 14.5 (14.4–14.6) |
+| Small | Ax | 0.00125 (0.000954–0.00129) | 0.00258 (0.00196–0.00334) | 0.00103 (0.000897–0.00112) | 0.00309 (0.00247–0.00348) |
+| Small | Atb | 0.00122 (0.00103–0.00127) | 0.00203 (0.00188–0.00281) | 0.00109 (0.00103–0.00123) | 0.00299 (0.00239–0.00333) |
+| Small | FDK | 0.00367 (0.0036–0.00458) | 0.00505 (0.00359–0.00786) | 0.00305 (0.00293–0.00316) | 0.00453 (0.00392–0.00511) |
+| Small | minTV, 10 it. | 0.0025 (0.00144–0.00268) | 0.0024 (0.0023–0.00269) | 0.000952 (0.00094–0.00103) | 0.00247 (0.0022–0.0042) |
+| 128³ | Ax | 0.0232 (0.0229–0.0247) | 0.111 (0.11–0.115) | 0.0137 (0.0135–0.014) | 0.0632 (0.0625–0.0642) |
+| 128³ | Atb | 0.0209 (0.0201–0.0232) | 0.132 (0.119–0.163) | 0.0126 (0.0126–0.013) | 0.0777 (0.0752–0.0808) |
+| 128³ | FDK | 0.0363 (0.0355–0.0368) | 0.138 (0.136–0.143) | 0.0244 (0.0236–0.0246) | 0.0879 (0.0866–0.0892) |
+| 128³ | minTV, 10 it. | 0.023 (0.0223–0.0236) | 0.0154 (0.0152–0.0161) | 0.00613 (0.00591–0.00633) | 0.0119 (0.0117–0.0128) |
+| Large, 4.25 GiB | Ax | 2.31 (2.18–2.48) | 3.54 (3.48–3.62) | 1.62 (1.59–1.68) | 2.9 (2.87–2.92) |
+| Large, 4.25 GiB | Atb | 2.55 (2.54–2.63) | 8.91 (8.87–9.07) | 1.52 (1.5–1.56) | 6.3 (6.15–6.49) |
+| Large, 4.25 GiB | FDK | 2.71 (2.63–2.78) | 8.98 (8.72–9.13) | 1.54 (1.49–1.56) | 7.52 (7.44–7.72) |
+| Large, 4.25 GiB | minTV, 10 it. | 11.9 (11.8–12) | 15.9 (15.9–16.3) | 3.62 (3.6–3.7) | 15.3 (15.2–16.4) |
 
 First call in the process, median of runs 2–5, in seconds:
 
 | Problem | Operation | Arc 140T | Core Ultra 9 285H | Arc Pro B50 | Core Ultra 7 265F |
 |---|---|---:|---:|---:|---:|
-| Small | Ax | 0.108 | 0.723 | 0.167 | 0.575 |
-| Small | Atb | 0.123 | 0.74 | 0.171 | 0.584 |
-| Small | FDK | 0.118 | 0.67 | 0.179 | 0.596 |
-| Small | minTV, 10 it. | 0.123 | 0.72 | 0.174 | 0.577 |
-| 128³ | Ax | 0.129 | 0.828 | 0.182 | 0.623 |
-| 128³ | Atb | 0.124 | 0.852 | 0.187 | 0.652 |
-| 128³ | FDK | 0.138 | 0.795 | 0.196 | 0.667 |
-| 128³ | minTV, 10 it. | 0.126 | 0.707 | 0.176 | 0.592 |
-| Large, 4.25 GiB | Ax | 2.44 | 4.04 | 1.8 | 3.25 |
-| Large, 4.25 GiB | Atb | 2.73 | 9.59 | 1.66 | 5.88 |
-| Large, 4.25 GiB | FDK | 2.76 | 8.88 | 1.68 | 6.5 |
-| Large, 4.25 GiB | minTV, 10 it. | 11.7 | 15.9 | 3.57 | 14 |
+| Small | Ax | 0.248 | 0.718 | 0.247 | 0.571 |
+| Small | Atb | 0.251 | 0.741 | 0.255 | 0.605 |
+| Small | FDK | 0.273 | 0.746 | 0.256 | 0.598 |
+| Small | minTV, 10 it. | 0.26 | 0.721 | 0.261 | 0.588 |
+| 128³ | Ax | 0.26 | 0.787 | 0.264 | 0.634 |
+| 128³ | Atb | 0.259 | 0.828 | 0.271 | 0.668 |
+| 128³ | FDK | 0.263 | 0.867 | 0.277 | 0.687 |
+| 128³ | minTV, 10 it. | 0.272 | 0.719 | 0.265 | 0.606 |
+| Large, 4.25 GiB | Ax | 2.48 | 4.01 | 1.91 | 3.35 |
+| Large, 4.25 GiB | Atb | 2.76 | 9.5 | 1.78 | 5.55 |
+| Large, 4.25 GiB | FDK | 2.93 | 8.8 | 1.8 | 6.08 |
+| Large, 4.25 GiB | minTV, 10 it. | 12 | 16.4 | 3.83 | 14.9 |
 
 **Parity, GPU vs CPU device on the same machine and the same inputs** (values are relative to the largest value in the output; large-volume images are compared on a 1/64 subsample):
 - **Atb and FDK:** max. difference ≤ 4.2e-5 and relative L2 ≤ 9.3e-6 at all sizes on both machines.
@@ -67,7 +67,12 @@ First call in the process, median of runs 2–5, in seconds:
 - **minTV, small and 128³:** max. difference ≤ 1.2e-3 and relative L2 ≤ 6.9e-6. Both devices are as close to a float64 NumPy reference as a float32 NumPy run is.
 - **minTV, large volume:** without splitting (Arc Pro B50 and both CPU devices), the results agree within 8.3e-5 max. difference and 1.7e-6 relative L2. The split run on the Arc 140T differs from them by up to 1.6e-3 (relative L2 3.0e-4).
 
-**Re-run on the laptop with commit 51e8dfd** (this branch with TIGRE master up to #868 merged in, and its CUDA changes ported to SYCL), same method and inputs:
-- Outputs: all 12 problem/operation pairs are bitwise identical to the 6b45fe1 run, on the Arc 140T and on the CPU device. The parity figures above still hold.
-- Second-call times: within the run-to-run range of the table above, except on the Core Ultra 9 285H for 128³ minTV, 0.0154 s (0.0152–0.0161); large-volume minTV, 15.9 s (15.9–16.3); and small FDK, 0.00505 s (0.00359–0.00786). Small FDK on the Arc 140T took 0.00367 s (0.0036–0.00458).
-- The table above is from 6b45fe1 on both machines.
+**Changes from the earlier build, commit 6b45fe1** (before TIGRE master up to #868 was merged in and its CUDA changes were ported to SYCL), same method, inputs and software:
+- Outputs: all 12 problem/operation pairs are bitwise identical to the 6b45fe1 run on all four devices, so the parity figures above are unchanged.
+- First call: on both GPUs, the first call on the small and 128³ problems takes about 0.08–0.16 s longer than with 6b45fe1 (for example, small Ax went from 0.108 to 0.248 s on the Arc 140T and from 0.167 to 0.247 s on the Arc Pro B50). The first call on the CPU devices is about the same. The cause has not been looked into.
+- Second call, where the median moved by more than 5% and outside the earlier run-to-run range (6b45fe1 → this build):
+  - Arc 140T: small FDK 0.00322 → 0.00367 s; small Atb 0.00131 → 0.00122 s; large Atb 2.7 → 2.55 s.
+  - Core Ultra 9 285H: small FDK 0.00374 → 0.00505 s; small minTV 0.0026 → 0.0024 s; 128³ minTV 0.021 → 0.0154 s.
+  - Arc Pro B50: small Ax 0.000922 → 0.00103 s; small minTV 0.000864 → 0.000952 s.
+  - Core Ultra 7 265F: small minTV 0.00436 → 0.00247 s; 128³ minTV 0.0156 → 0.0119 s; large Atb 6.93 → 6.3 s; large minTV 14.5 → 15.3 s.
+  - All other second-call medians are within 5% of the 6b45fe1 figures or inside their run-to-run range.
