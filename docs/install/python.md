@@ -188,7 +188,9 @@ TIGRE_SYCL=1 pip install --no-build-isolation --no-cache-dir .
 prompt in which `icx` and its libraries are on `PATH` and `LIB`.
 
 TIGRE lists the Level Zero GPUs if there are any, otherwise the other GPUs,
-otherwise the remaining SYCL devices (such as the CPU). `gpuids` index into that
+otherwise the remaining SYCL devices (such as the CPU). With
+`TIGRE_SYCL_ALL_DEVICES=1`, the remaining devices are listed after the GPUs, so
+`gpuids` can include a GPU and the CPU together. `gpuids` index into that
 list, and `ONEAPI_DEVICE_SELECTOR` filters it as usual. All projectors,
 backprojectors, TV/PICCS regularisers and `CTnoise.add` are available.
 `CTnoise.add` uses a different random number generator than the CUDA build, so

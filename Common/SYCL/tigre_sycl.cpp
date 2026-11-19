@@ -20,6 +20,7 @@
 #include <mutex>
 #include <algorithm>
 #include <stdlib.h>
+#include <string.h>
 
 static std::vector<sycl::device> enumerateDevices(){
     std::vector<sycl::device> l0Gpus, otherGpus, others;
@@ -35,9 +36,14 @@ static std::vector<sycl::device> enumerateDevices(){
             }
         }
     }
-    if (!l0Gpus.empty())    return l0Gpus;
-    if (!otherGpus.empty()) return otherGpus;
-    return others;
+    std::vector<sycl::device> gpus = l0Gpus.empty() ? otherGpus : l0Gpus;
+    if (gpus.empty())
+        return others;
+    // TIGRE_SYCL_ALL_DEVICES=1: list the other devices (e.g. the CPU) after the GPUs.
+    const char* all = getenv("TIGRE_SYCL_ALL_DEVICES");
+    if (all && *all && strcmp(all, "0") != 0)
+        gpus.insert(gpus.end(), others.begin(), others.end());
+    return gpus;
 }
 
 const std::vector<sycl::device>& tigreSyclDevices(){
