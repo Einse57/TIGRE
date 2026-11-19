@@ -77,27 +77,27 @@ namespace tigre_piccs {
         if (z >= depth || y >= rows || x >= cols)
             return;
         unsigned long size2d = rows*cols;
-        unsigned long long idx = z * size2d + y * cols + x;
+        size_t idx = (size_t)z * size2d + y * cols + x;
 
         float uidx = u[idx];
 
         if ( z - 1 >= 0 && z<depth) {
-            grad[0] = (uidx-u[(z-1)*size2d + y*cols + x]) ;
+            grad[0] = (uidx-u[(size_t)(z-1)*size2d + y*cols + x]) ;
         }
         
         if ( y - 1 >= 0 && y<rows){
-            grad[1] = (uidx-u[z*size2d + (y-1)*cols + x]) ;
+            grad[1] = (uidx-u[(size_t)z*size2d + (y-1)*cols + x]) ;
         }
         
         if ( x - 1 >= 0 && x<cols) {
-            grad[2] = (uidx-u[z*size2d + y*cols + (x-1)]);
+            grad[2] = (uidx-u[(size_t)z*size2d + y*cols + (x-1)]);
         }
     }
     
     static inline void gradientTV(const float* f, float* dftv,
             long depth, long rows, long cols,
             unsigned long x, unsigned long y, unsigned long z){
-        unsigned long long idx = z * rows * cols + y * cols + x;
+        size_t idx = (size_t)z * (rows * cols) + y * cols + x;
         if ( x >= cols || y >= rows || z >= depth )
             return;
         
@@ -156,7 +156,7 @@ using namespace tigre_piccs;
         
     
             sycl::queue* q=&tigreSyclQueue(gpuids[0]);
-            size_t total_pixels = image_size[0] * image_size[1]  * image_size[2] ;
+            size_t total_pixels = (size_t)image_size[0]*image_size[1]  * image_size[2] ;
             size_t mem_size = sizeof(float) * total_pixels;
         
             float *d_image,*d_prior,*d_dpiccsTV, *d_dimgTV,*d_aux_small,*d_aux_image, *d_norm2;

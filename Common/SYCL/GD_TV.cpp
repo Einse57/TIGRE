@@ -72,27 +72,27 @@ namespace tigre_gd_tv {
             long z, long y, long x,
             long depth, long rows, long cols){
         unsigned long size2d = rows*cols;
-        unsigned long long idx = z * size2d + y * cols + x;
+        size_t idx = (size_t)z * size2d + y * cols + x;
         
         float uidx = u[idx];
         
         if ( z - 1 >= 0 && z<depth) {
-            grad[0] = (uidx-u[(z-1)*size2d + y*cols + x]) ;
+            grad[0] = (uidx-u[(size_t)(z-1)*size2d + y*cols + x]) ;
         }
         
         if ( y - 1 >= 0 && y<rows){
-            grad[1] = (uidx-u[z*size2d + (y-1)*cols + x]) ;
+            grad[1] = (uidx-u[(size_t)z*size2d + (y-1)*cols + x]) ;
         }
         
         if ( x - 1 >= 0 && x<cols) {
-            grad[2] = (uidx-u[z*size2d + y*cols + (x-1)]);
+            grad[2] = (uidx-u[(size_t)z*size2d + y*cols + (x-1)]);
         }
     }
     
     static inline void gradientTV(const float* f, float* dftv,
             long depth, long rows, long cols,
             unsigned long x, unsigned long y, unsigned long z){
-        unsigned long long idx = z * rows * cols + y * cols + x;
+        size_t idx = (size_t)z * (rows * cols) + y * cols + x;
         if ( x >= cols || y >= rows || z >= depth )
             return;
         
@@ -180,8 +180,8 @@ using namespace tigre_gd_tv;
         
         
             // %5 of free memory should be enough, we have almost no variables in these kernels
-            size_t total_pixels              = image_size[0] * image_size[1]  * image_size[2] ;
-            size_t mem_slice_image           = sizeof(float)* image_size[0] * image_size[1]  ;
+            size_t total_pixels              = (size_t)image_size[0]*image_size[1]  * image_size[2] ;
+            size_t mem_slice_image           = sizeof(float)* (size_t)image_size[0]*image_size[1]  ;
             size_t mem_size_image            = sizeof(float)* total_pixels;
             size_t mem_auxiliary             = sizeof(float)* (total_pixels + MAXTHREADS - 1) / MAXTHREADS;
         
@@ -252,7 +252,7 @@ using namespace tigre_gd_tv;
         
              // Assert
        
-            if ((slices_per_split+buffer_length*2)*image_size[0]*image_size[1]* sizeof(float)!= mem_img_each_GPU){
+            if ((slices_per_split+buffer_length*2)*(size_t)image_size[0]*image_size[1]* sizeof(float)!= mem_img_each_GPU){
                 mexErrMsgIdAndTxt("GD_TV:GPU","Assertion Failed. Memory needed calculation broken! Please tell: ander.biguri@gmail.com\n");
             }
         
@@ -293,12 +293,12 @@ using namespace tigre_gd_tv;
             
             
             }
-           unsigned long long buffer_pixels=buffer_length*image_size[0]*image_size[1];
+           unsigned long long buffer_pixels=buffer_length*(size_t)image_size[0]*image_size[1];
             float* buffer;
             if(splits>1){
                 mexWarnMsgIdAndTxt("minimizeTV:GD_TV:Image_split","Your image can not be fully split between the available GPUs. The computation of minTV will be significantly slowed due to the image size.\nApproximated mathematics turned on for computational speed.");
             }else{
-                buffer=(float*)malloc(buffer_length*image_size[0]*image_size[1]*sizeof(float));
+                buffer=(float*)malloc(buffer_length*(size_t)image_size[0]*image_size[1]*sizeof(float));
                 onError.add([p=buffer]{ free(p); });
             }
         
@@ -355,8 +355,8 @@ using namespace tigre_gd_tv;
                     // Copy image to memory
                     for (dev = 0; dev < deviceCount; dev++){
                         curr_slices=((sp*deviceCount+dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*(sp*deviceCount+dev);
-                        curr_pixels=curr_slices*image_size[0]*image_size[1];
-                        linear_idx_start=image_size[0]*image_size[1]*slices_per_split*(sp*deviceCount+dev);
+                        curr_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
+                        linear_idx_start=(size_t)image_size[0]*image_size[1]*slices_per_split*(sp*deviceCount+dev);
                     
                         // Check if its the first or last chunck
                         is_last_chunk=!((sp*deviceCount+dev)<deviceCount*splits-1);
@@ -417,7 +417,7 @@ using namespace tigre_gd_tv;
                             curr_slices=((sp*deviceCount+dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*(sp*deviceCount+dev);
                             // no need to copy the 2 aux slices here
                             stream[dev*nStream_device]->wait();
-                            stream[dev*nStream_device+1]->memcpy(d_norm2[dev],d_dimgTV[dev]+buffer_pixels,image_size[0]*image_size[1]*curr_slices*sizeof(float));
+                            stream[dev*nStream_device+1]->memcpy(d_norm2[dev],d_dimgTV[dev]+buffer_pixels,(size_t)image_size[0]*image_size[1]*curr_slices*sizeof(float));
                         }
                     
                     
@@ -426,7 +426,7 @@ using namespace tigre_gd_tv;
                         for (dev = 0; dev < deviceCount; dev++){
                             q=&tigreSyclQueue(gpuids[dev]);
                             curr_slices=((sp*deviceCount+dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*(sp*deviceCount+dev);
-                            total_pixels=curr_slices*image_size[0]*image_size[1];
+                            total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
                         
                         
                             stream[dev*nStream_device+1]->wait();
@@ -436,7 +436,7 @@ using namespace tigre_gd_tv;
                         for (dev = 0; dev < deviceCount; dev++){
                             q=&tigreSyclQueue(gpuids[dev]);
                             curr_slices=((sp*deviceCount+dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*(sp*deviceCount+dev);
-                            total_pixels=curr_slices*image_size[0]*image_size[1];
+                            total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
 
                             stream[dev*nStream_device]->wait();
                             stream[dev*nStream_device+1]->memcpy(&sumnorm2[dev], d_norm2aux[dev], sizeof(float));
@@ -467,7 +467,7 @@ using namespace tigre_gd_tv;
                         for (dev = 0; dev < deviceCount; dev++){
                             q=&tigreSyclQueue(gpuids[dev]);
                             curr_slices=((sp*deviceCount+dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*(sp*deviceCount+dev);
-                            total_pixels=curr_slices*image_size[0]*image_size[1];
+                            total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
                             //NORMALIZE
                             //in a Tesla, maximum blocks =15 SM * 4 blocks/SM
                             divideArrayScalar(*stream[dev*nStream_device],d_dimgTV[dev]+buffer_pixels,(float)sqrt(totalsum),total_pixels);
@@ -484,7 +484,7 @@ using namespace tigre_gd_tv;
                         for (dev = 0; dev < deviceCount; dev++){
                             q=&tigreSyclQueue(gpuids[dev]);
                             curr_slices=((sp*deviceCount+dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*(sp*deviceCount+dev);
-                            total_pixels=curr_slices*image_size[0]*image_size[1];
+                            total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
                         
                             substractArrays(*stream[dev*nStream_device],d_image[dev]+buffer_pixels,d_dimgTV[dev]+buffer_pixels, total_pixels);
                         }
@@ -499,7 +499,7 @@ using namespace tigre_gd_tv;
                     if(splits==1){
                         for(dev=0; dev<deviceCount;dev++){
                             curr_slices=((sp*deviceCount+dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*(sp*deviceCount+dev);
-                            total_pixels=curr_slices*image_size[0]*image_size[1];
+                            total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
                             if (dev<deviceCount-1){
                                 q=&tigreSyclQueue(gpuids[dev+1]);
                                 q->memcpy(buffer,d_image[dev+1]+buffer_pixels,buffer_pixels*sizeof(float)).wait();
@@ -509,7 +509,7 @@ using namespace tigre_gd_tv;
                             q->wait();
                             if (dev>0){
                                 q=&tigreSyclQueue(gpuids[dev-1]);
-                                q->memcpy(buffer,d_image[dev-1]+(size_t)slices_per_split*image_size[0]*image_size[1],buffer_pixels*sizeof(float));
+                                q->memcpy(buffer,d_image[dev-1]+(size_t)slices_per_split*(size_t)image_size[0]*image_size[1],buffer_pixels*sizeof(float));
                                 q->wait();
                                 q=&tigreSyclQueue(gpuids[dev]);
                                 q->memcpy(d_image[dev],buffer,buffer_pixels*sizeof(float));
@@ -523,8 +523,8 @@ using namespace tigre_gd_tv;
                             q=&tigreSyclQueue(gpuids[dev]);
                         
                             curr_slices=((sp*deviceCount+dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*(sp*deviceCount+dev);
-                            linear_idx_start=image_size[0]*image_size[1]*slices_per_split*(sp*deviceCount+dev);
-                            total_pixels=curr_slices*image_size[0]*image_size[1];
+                            linear_idx_start=(size_t)image_size[0]*image_size[1]*slices_per_split*(sp*deviceCount+dev);
+                            total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
                             stream[dev*nStream_device+1]->memcpy(&dst[linear_idx_start],d_image[dev]+buffer_pixels,total_pixels*sizeof(float));
                         }
                     }
@@ -544,8 +544,8 @@ using namespace tigre_gd_tv;
                     q=&tigreSyclQueue(gpuids[dev]);
                 
                     curr_slices=((dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*dev;
-                    total_pixels=curr_slices*image_size[0]*image_size[1];
-                    q->memcpy(dst+slices_per_split*image_size[0]*image_size[1]*dev,d_image[dev]+buffer_pixels,total_pixels*sizeof(float)).wait();
+                    total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
+                    q->memcpy(dst+slices_per_split*(size_t)image_size[0]*image_size[1]*dev,d_image[dev]+buffer_pixels,total_pixels*sizeof(float)).wait();
                 }
             }
         
