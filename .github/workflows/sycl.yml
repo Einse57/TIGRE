@@ -62,8 +62,25 @@ jobs:
           echo "LD_LIBRARY_PATH=$env_path/lib" >> "$GITHUB_ENV"
           ls "$env_path/etc/OpenCL/vendors"
 
+      # icx 2025.2 rejects the STL of MSVC 14.52 and later ("expected Clang 22 or newer"),
+      # which newer windows-latest images default to. Use the newest installed toolset
+      # below 14.52.
+      - name: Pick an MSVC toolset (Windows)
+        id: msvc
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $all = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory | ForEach-Object Name
+          "Installed MSVC toolsets: $($all -join ', ')"
+          $pick = $all | Where-Object { [version]$_ -lt [version]'14.52' } | Sort-Object { [version]$_ } | Select-Object -Last 1
+          if (-not $pick) { throw "no MSVC toolset below 14.52 installed" }
+          "Using MSVC $pick"
+          "toolset=$pick" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
       - uses: ilammy/msvc-dev-cmd@v1.13.0
         if: runner.os == 'Windows'
+        with:
+          toolset: ${{ steps.msvc.outputs.toolset }}
       - name: Set up the environment (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
