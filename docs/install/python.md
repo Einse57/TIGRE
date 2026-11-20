@@ -104,6 +104,28 @@ pip install .
 :::
 ::::
 
+### Choosing the GPU backend
+
+TIGRE is built for one GPU backend. When you build from source, it uses the
+first one whose compiler it finds, in this order:
+
+| Backend | GPUs | Found from |
+|---|---|---|
+| `cuda` | NVIDIA | `CUDA_HOME` or `CUDA_PATH`, `nvcc` on the `PATH`, or the default CUDA install location |
+| `hip` | AMD | `ROCM_PATH` or `HIP_PATH`, `hipcc` on the `PATH`, or `/opt/rocm` |
+| `sycl` | Intel | `icpx` (`icx` on Windows) on the `PATH` |
+| `metal` | Apple Silicon | a Mac with Apple Silicon |
+
+The build prints which backend it chose and why. To choose one yourself, set
+`TIGRE_BACKEND`, for example `TIGRE_BACKEND=cuda pip install .`
+(`set TIGRE_BACKEND=cuda` first on Windows).
+
+On this branch `cuda` and `sycl` can be built (`sycl`: see the SYCL section
+below). The others are being added: `hip` in
+[#747](https://github.com/CERN/TIGRE/pull/747) and `metal` in
+[#876](https://github.com/CERN/TIGRE/issues/876). If the build picks one of
+them, it stops and says so; set `TIGRE_BACKEND=cuda` to build for NVIDIA GPUs.
+
 ## Conda (unofficial)
 
 CCPi Tomographic Imaging builds and maintains a conda package:
@@ -183,7 +205,7 @@ From a local clone:
 TIGRE_SYCL=1 pip install --no-build-isolation --no-cache-dir .
 ```
 
-`TIGRE_SYCL_CXX` selects a different SYCL compiler. On Windows, run
+`TIGRE_BACKEND=sycl` does the same as `TIGRE_SYCL=1`. `TIGRE_SYCL_CXX` selects a different SYCL compiler. On Windows, run
 `set TIGRE_SYCL=1` and then the `pip` command from an x64 Visual Studio developer
 prompt in which `icx` and its libraries are on `PATH` and `LIB`.
 

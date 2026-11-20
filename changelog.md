@@ -8,6 +8,12 @@ thank you.
 ## Unreleased
 
 ### Added
+- Python and MATLAB builds: the GPU backend (`cuda`, `hip`, `sycl` or `metal`) is chosen with the
+  `TIGRE_BACKEND` environment variable, or in MATLAB with `Compile -backend <name>`. When neither
+  is given, the build uses the first backend whose compiler is installed, CUDA first, and prints
+  which one it chose. On this branch `cuda` and `sycl` can be built (`TIGRE_BACKEND=sycl` does the
+  same as `TIGRE_SYCL=1`); `hip` and `metal` stop with a message pointing to the work that adds
+  them (#747, #876).
 - Python: `tigre.Ax` and `tigre.Atb` take PyTorch CUDA tensors and CuPy arrays, and return
   the same kind of array on the same GPU, without copying through host memory. This uses the
   array's GPU only; if `gpuids` names other GPUs, the data goes through the host as before.
@@ -15,13 +21,26 @@ thank you.
   the bindings empty PyTorch's memory cache and try once more.
 - SYCL build (`TIGRE_SYCL=1`) of all projectors, backprojectors, TV/PICCS regularisers
   and noise generation, compiled with the oneAPI DPC++ compiler instead of CUDA.
+- Parallel beam: `Ax` (Siddon and interpolated) and `Atb` use all the GPUs in `gpuids`, as cone beam
+  does: `Ax` shares the angles between the GPUs, `Atb` the image slices. Before, they ran on the first
+  GPU only. Like cone beam, they now also work when the image does not fit on the GPU: they split it
+  in pieces along z (before, they failed with a CUDA error) (#286, #295).
 
 ### Changed
+- Python tests: rare edge cases and stress tests (little free GPU memory, thousands of repeated
+  calls, images split between pieces) are marked `extended` and not run by a plain `pytest`
+  (on an RTX 4070 the suite goes from ~6 to ~2 minutes). Run them with `pytest -m extended`;
+  see `contributing.md`.
 - `tvdenoise`/`im3DDenoise` (and so FISTA, SART-TV and the other TV algorithms that use it): the
   first and last z-slice of the image now use the same boundary as x and y. Before, a mirrored
   extra slice was added beyond each end and updated with the rest, so results at the first and
   last slice change (by up to ~10% of the maximum in strong denoising; under 1% one slice in;
   unchanged further in). This also makes split, unsplit and multi-GPU results identical (#863).
+- `minTV`/`AwminTV` (used by ASD_POCS, OS_ASD_POCS, AwASD_POCS, ...): each GPU's part of the
+  gradient norm is now summed and returned in double precision, and the parts are added in double,
+  so they give the same result on 2 or more GPUs as on 1 (before, up to ~5e-4 of the maximum apart
+  in one call). Single-GPU results change by rounding; the POCS solvers amplify such changes (up to
+  ~5e-3 of the maximum after 10 OS_AwASD_POCS iterations) (#856; approach by Jeff Daily).
 - Python: a CUDA error now raises `RuntimeError` (with the CUDA message) instead of ending the
   whole Python process with `exit(1)`. Ax and Atb release the GPU memory, streams, textures and
   page-locked memory the failed call held, so TIGRE can be used again in the same process.
@@ -40,6 +59,17 @@ thank you.
   older Linux distributions should build from source.
 
 ### Fixed
+- `minTV`, `AwminTV` and `tvdenoise` failed on several GPUs (or when split for memory) when the image
+  had so few z slices that the last pieces came out empty, e.g. 5 slices on 4 GPUs, or tvdenoise of
+  one slice on 2 GPUs. The pieces are now chosen so that none is empty, using fewer GPUs if needed.
+- `tvdenoise` (Python; `im3DDenoise(...,'TV',...)` in MATLAB) on 2 or more GPUs without a direct link
+  between them, when the image fits only shared between the GPUs: the host buffer for the halo slices
+  had room for one slice per halo, but the halos are up to 60 slices wide, so they overwrote each other
+  (wrong results) and the last one wrote past the end of the buffer (#891; found by Einse57 in #885).
+- Python: `Ax` and `Atb` changed the `GpuIds` they were given when there were fewer angles
+  (`Ax`) or image slices (`Atb`) than GPUs, keeping only as many GPUs as needed. Algorithms
+  that project one angle at a time (SART, ASD_POCS, AwASD_POCS) then ran on one GPU after the
+  first angle, for the projections and for the TV step. They now trim a copy (#855).
 - `tvdenoise` (Python; `im3DDenoise(...,'TV',...)` in MATLAB, used by FISTA and SART-TV), when the
   image did not fit on the GPU and was split in pieces: a piece read its halo slices from host
   memory that the previous piece had already advanced, so the result differed from the unsplit
@@ -64,7 +94,8 @@ thank you.
   conversions. More accurate: it added up the step between voxel boundaries in single
   precision, which drifted by up to ~2e-3 (relative) along rays through a 512³ image. It now
   computes each boundary from its plane, with an error of ~1e-5. Siddon projections change by
-  up to that drift, towards the exact value. Parallel beam uses the same traversal (#859).
+  up to that drift, towards the exact value. Parallel beam uses the same traversal (#859), and is
+  1.7-2.0x faster on Windows and 4.4-4.8x on Linux.
   The technical note `docs/technical-notes/siddon/siddon_note.pdf` explains these changes.
 - `tvdenoise` (Python; `im3DDenoise` in MATLAB, also used by FISTA and other TV algorithms)
   could loop forever when the image did not fit on the GPU and was split: for some amounts of

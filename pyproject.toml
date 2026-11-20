@@ -3,7 +3,7 @@ line-length = 100
 
 [build-system]
 requires = [
-	"setuptools",
+	"setuptools>=77",
 	"wheel",
 	"Cython",
 	"numpy<2.5.1",
@@ -25,7 +25,8 @@ authors=[
 	{name = "Reuben Lindroos"},
 	{name = "Sam Loescher"},
 ]
-license={text="BSD-3-Clause"}
+license="BSD-3-Clause"
+license-files=["LICENSE.txt"]
 requires-python = ">=3.11,<3.15"
 
 [dependency-groups]
@@ -44,7 +45,11 @@ dev = [
 testpaths = ["Python/tests"]
 markers = [
 	"gpu: test needs a CUDA-capable GPU (skipped automatically when none is available)",
+	"extended: rare edge cases and stress tests (little free GPU memory, thousands of repeated calls, large images); not run by default: pytest -m extended",
 ]
+# A plain `pytest` runs the core suite. `pytest -m extended` runs only the extended tests,
+# `pytest -m "extended or not extended"` runs everything (a -m given on the command line replaces this one).
+addopts = '-m "not extended"'
 
 [tool.setuptools.packages.find]
 where = ["Python"]
