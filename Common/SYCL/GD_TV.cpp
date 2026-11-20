@@ -134,14 +134,23 @@ namespace tigre_gd_tv {
         q.parallel_for(sycl::range<1>(n), [=](sycl::id<1> i){ vec[i]-=vec2[i]; });
     }
     // Sum of squares of g_idata[0..n) into g_odata[0].
+    // Sum of squares of g_idata[0..n), one float per block of MAXTHREADS elements, into
+    // g_odata[0..(n+MAXTHREADS-1)/MAXTHREADS). The host adds the blocks in double (#856).
     static void reduceNorm2(sycl::queue& q, const float* g_idata, float* g_odata, size_t n){
-        q.submit([&](sycl::handler& h){
-            auto red = sycl::reduction(g_odata, 0.0f, sycl::plus<float>(),
-                                       sycl::property::reduction::initialize_to_identity());
-            h.parallel_for(sycl::range<1>(n), red, [=](sycl::id<1> i, auto& sum){
-                float v=g_idata[i];
-                sum+=v*v;
-            });
+        size_t nblocks=(n+MAXTHREADS-1)/MAXTHREADS;
+        size_t wg=q.get_device().get_info<sycl::info::device::max_work_group_size>();
+        wg=wg<256? wg:256;
+        while (MAXTHREADS%wg) wg--;
+        q.parallel_for(sycl::nd_range<1>(nblocks*wg, wg), [=](sycl::nd_item<1> it){
+            size_t blk=it.get_group(0);
+            size_t lid=it.get_local_id(0);
+            float s=0;
+            for (size_t k=lid; k<MAXTHREADS; k+=wg){
+                size_t idx=blk*MAXTHREADS+k;
+                if (idx<n){ float v=g_idata[idx]; s+=v*v; }
+            }
+            s=sycl::reduce_over_group(it.get_group(), s, sycl::plus<float>());
+            if (lid==0) g_odata[blk]=s;
         });
     }
 
@@ -325,10 +334,16 @@ using namespace tigre_gd_tv;
 
             double totalsum_prev;
             double totalsum;
-            float sum_curr_spl;
-            float * sumnorm2;
-            sumnorm2=(float*)malloc(deviceCount*sizeof(float));
+            // Each device's part of the norm and the sum of the parts are kept in double (#856),
+            // so the norm barely depends on how the image is split between devices.
+            double sum_curr_spl;
+            double * sumnorm2;
+            sumnorm2=(double*)malloc(deviceCount*sizeof(double));
             onError.add([p=sumnorm2]{ free(p); });
+            size_t nparts_max=mem_auxiliary/sizeof(float)+1;
+            float * normparts;
+            normparts=(float*)malloc(deviceCount*nparts_max*sizeof(float));
+            onError.add([p=normparts]{ free(p); });
         
             unsigned int curr_slices;
             unsigned long long curr_pixels;
@@ -439,12 +454,20 @@ using namespace tigre_gd_tv;
                             total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
 
                             stream[dev*nStream_device]->wait();
-                            stream[dev*nStream_device+1]->memcpy(&sumnorm2[dev], d_norm2aux[dev], sizeof(float));
+                            stream[dev*nStream_device+1]->memcpy(normparts+dev*nparts_max, d_norm2aux[dev], ((total_pixels+MAXTHREADS-1)/MAXTHREADS)*sizeof(float));
                         }
                         for (dev = 0; dev < deviceCount; dev++){
                             q=&tigreSyclQueue(gpuids[dev]);
                             q->wait();
                          }
+                        for (dev = 0; dev < deviceCount; dev++){
+                            curr_slices=((sp*deviceCount+dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*(sp*deviceCount+dev);
+                            total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
+                            sumnorm2[dev]=0;
+                            for (size_t k=0; k<(total_pixels+MAXTHREADS-1)/MAXTHREADS; k++){
+                                sumnorm2[dev]+=normparts[dev*nparts_max+k];
+                            }
+                        }
                     
                     
                         // Accumulate the norm accross devices
@@ -453,7 +476,7 @@ using namespace tigre_gd_tv;
                         for (dev = 0; dev < deviceCount; dev++){
                             sum_curr_spl+=sumnorm2[dev];
                         }
-                        sum_curr_spl+=0.0000001f; // avoid division by zero
+                        sum_curr_spl+=0.0000001; // avoid division by zero
                     
                         // If we have more than one splits, lets use the result from prior calls
                         if(i>0 && splits>1){

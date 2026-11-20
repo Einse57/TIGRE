@@ -41,6 +41,7 @@ thank you.
   so they give the same result on 2 or more GPUs as on 1 (before, up to ~5e-4 of the maximum apart
   in one call). Single-GPU results change by rounding; the POCS solvers amplify such changes (up to
   ~5e-3 of the maximum after 10 OS_AwASD_POCS iterations) (#856; approach by Jeff Daily).
+  The SYCL build does the same: float sums per block of 1024 voxels, added in double on the host.
 - Python: a CUDA error now raises `RuntimeError` (with the CUDA message) instead of ending the
   whole Python process with `exit(1)`. Ax and Atb release the GPU memory, streams, textures and
   page-locked memory the failed call held, so TIGRE can be used again in the same process.
