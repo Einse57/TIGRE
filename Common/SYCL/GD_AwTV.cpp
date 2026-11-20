@@ -60,6 +60,7 @@
 #include <sycl/sycl.hpp>
 #include "GD_AwTV.hpp"
 #include "tigre_sycl.hpp"
+#include "gpuUtils.hpp"
 #include "tigre_release_on_error.hpp"
 
 // The kernels of each TIGRE module share one SYCL runtime in a Python process, and the
@@ -223,6 +224,8 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
             if(mem_GPU_global> 3*mem_size_image+3*(deviceCount-1)*mem_slice_image*buffer_length+mem_auxiliary) {
                 // We only need to split if we have extra GPUs
                 slices_per_split=(image_size[2]+deviceCount-1)/deviceCount;
+                // No empty pieces (see tvPiecesWithoutEmpty); this may use fewer GPUs or smaller pieces.
+                tvPiecesWithoutEmpty((unsigned long)image_size[2], &deviceCount, &splits, &slices_per_split);
                 mem_img_each_GPU=mem_slice_image*((slices_per_split+buffer_length*2));
             }else{
                 // The smallest working set: on each GPU, 3 images of one slice plus the
@@ -250,6 +253,9 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
                     slices_per_split=(image_size[2]+deviceCount*splits-1)/(deviceCount*splits); // amount of slices that fit on a GPU. Later we add 2 to these, as we need them for overlap
                     mem_img_each_GPU=(mem_slice_image*(slices_per_split+buffer_length*2));
                 }
+                // No empty pieces (see tvPiecesWithoutEmpty); this may use fewer GPUs or smaller pieces.
+                tvPiecesWithoutEmpty((unsigned long)image_size[2], &deviceCount, &splits, &slices_per_split);
+                mem_img_each_GPU=(mem_slice_image*(slices_per_split+buffer_length*2));
 
 
                 // How many EXTRA buffer slices should be able to fit in here??!?!

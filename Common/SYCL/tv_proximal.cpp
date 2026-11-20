@@ -60,6 +60,7 @@
 #include <sycl/sycl.hpp>
 #include "tv_proximal.hpp"
 #include "tigre_sycl.hpp"
+#include "gpuUtils.hpp"
 #include "tigre_release_on_error.hpp"
 
 void cpy_from_host(float* device_array,float* host_array, 
@@ -236,7 +237,9 @@ using namespace tigre_tv_proximal;
             if(mem_GPU_global> 5*mem_size_image+5*mem_slice_image*buffer_length*2){
                 // We only need to split if we have extra GPUs
                 slices_per_split=(image_size[2]+deviceCount-1)/deviceCount;
-                mem_img_each_GPU=mem_slice_image*(  (image_size[2]+deviceCount-1)/deviceCount  + buffer_length*2);
+                // No empty pieces (see tvPiecesWithoutEmpty); this may use fewer GPUs or smaller pieces.
+                tvPiecesWithoutEmpty((unsigned long)image_size[2], &deviceCount, &splits, &slices_per_split);
+                mem_img_each_GPU=mem_slice_image*(slices_per_split + buffer_length*2);
             }else{
                 // The smallest working set: on each GPU, 5 images of one slice plus the
                 // minimum overlap (1 slice on each side). If not even that fits, say so
@@ -262,6 +265,9 @@ using namespace tigre_tv_proximal;
                     slices_per_split=(image_size[2]+deviceCount*splits-1)/(deviceCount*splits); // amount of slices that fit on a GPU. Later we add 2 to these, as we need them for overlap
                     mem_img_each_GPU=(mem_slice_image*(slices_per_split+buffer_length*2));
                 }
+                // No empty pieces (see tvPiecesWithoutEmpty); this may use fewer GPUs or smaller pieces.
+                tvPiecesWithoutEmpty((unsigned long)image_size[2], &deviceCount, &splits, &slices_per_split);
+                mem_img_each_GPU=(mem_slice_image*(slices_per_split+buffer_length*2));
             
                 // How many EXTRA buffer slices should be able to fit in here??!?!
                 mem_free=mem_GPU_global-(5*mem_img_each_GPU);
