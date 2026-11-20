@@ -375,6 +375,9 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
             onError.add([p=offset_host]{ free(p); });
             unsigned long long* bytes_device =(unsigned long long*)malloc(deviceCount*sizeof(unsigned long long));
             onError.add([p=bytes_device]{ free(p); });
+            unsigned long long* bytes_beyond =(unsigned long long*)malloc(deviceCount*sizeof(unsigned long long));
+            onError.add([p=bytes_beyond]{ free(p); });
+            const size_t image_pixels=(size_t)image_size[0]*image_size[1]*image_size[2];
             bool is_first_chunk;
             bool is_last_chunk;
             for(unsigned int i=0;i<maxIter;i+=(buffer_length-1)){
@@ -402,6 +405,14 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
                         offset_device[dev]=buffer_pixels*is_first_chunk;
                         offset_host[dev]=linear_idx_start-buffer_pixels*!is_first_chunk;
                         bytes_device[dev]=curr_pixels+buffer_pixels*!is_first_chunk+buffer_pixels*!is_last_chunk;
+                        // The halo after the last-but-one piece reaches past the last slice when the last piece
+                        // is thinner than the halo (e.g. 64 slices in pieces of 3 with a 2-slice halo: the last
+                        // piece has 1). Copy only what the image has, and zero the slots beyond it.
+                        bytes_beyond[dev]=0;
+                        if (offset_host[dev]+bytes_device[dev]>image_pixels){
+                            bytes_beyond[dev]=offset_host[dev]+bytes_device[dev]-image_pixels;
+                            bytes_device[dev]-=bytes_beyond[dev];
+                        }
                     }
 
                     if(i==0){
@@ -409,6 +420,8 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
                             q=&tigreSyclQueue(gpuids[dev]);
                         
                             stream[dev*nStream_device+1]->memcpy(d_image[dev]+offset_device[dev],img+offset_host[dev],bytes_device[dev]*sizeof(float));
+                            if (bytes_beyond[dev])
+                                stream[dev*nStream_device+1]->memset(d_image[dev]+offset_device[dev]+bytes_device[dev],0,bytes_beyond[dev]*sizeof(float));
                         
                         
                         }
@@ -422,6 +435,8 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
                         for (dev = 0; dev < deviceCount; dev++){
                             q=&tigreSyclQueue(gpuids[dev]);
                             stream[dev*nStream_device+1]->memcpy(d_image[dev]+offset_device[dev],dst+offset_host[dev],bytes_device[dev]*sizeof(float));
+                            if (bytes_beyond[dev])
+                                stream[dev*nStream_device+1]->memset(d_image[dev]+offset_device[dev]+bytes_device[dev],0,bytes_beyond[dev]*sizeof(float));
                         
                         
                         }

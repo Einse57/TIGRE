@@ -75,37 +75,14 @@ def _check(result, ref, name, tolerance):
     assert diff < tolerance, (name, diff)
 
 
-def _last_piece_thinner_than_halo(nz, listings):
-    # minTV/AwminTV pieces as tvPiecesWithoutEmpty picks them (one device below 4 slices). When
-    # the last piece has fewer slices than the 2-slice halo, the halo after the piece before it is
-    # copied from past the end of the host image, which can fail depending on what memory follows
-    # the image (seen on Windows as UR_RESULT_ERROR_OUT_OF_DEVICE_MEMORY). Not fixed yet: skipped.
-    if nz < 4:
-        return False
-    best = None
-    for d in range(listings, 0, -1):
-        for s in range(-(-nz // listings), 0, -1):
-            pieces = -(-nz // s)
-            if pieces % d:
-                continue
-            key = (pieces // d, -d, -s)
-            if best is None or key < best[0]:
-                best = (key, s)
-    s = best[1]
-    return nz - s * (-(-nz // s) - 1) < 2
-
-
 @pytest.mark.parametrize("listings", [2, 3])
 def test_few_slices_match_one_listing(tmp_path, listings):
     names = ("minTV", "AwminTV", "tvdenoise")
     sizes = range(1, 2 * listings + 2)
-    cases = [(n, (nz, 32, 40), k) for n in names for nz in sizes for k in (1, listings)
-             if n == "tvdenoise" or not _last_piece_thinner_than_halo(nz, listings)]
+    cases = [(n, (nz, 32, 40), k) for n in names for nz in sizes for k in (1, listings)]
     out = _run(tmp_path, cases)
     for name in names:
         for nz in sizes:
-            if name != "tvdenoise" and _last_piece_thinner_than_halo(nz, listings):
-                continue
             _check(out["%s_%d_%d" % (name, nz, listings)], out["%s_%d_1" % (name, nz)],
                    (name, nz), 1e-6)
 
@@ -121,3 +98,36 @@ def test_two_listings_with_little_memory(tmp_path):
         # test_sycl_low_memory.py); tvdenoise: the unsplit result.
         tolerance = 1e-6 if name == "tvdenoise" else 5e-2
         _check(split["%s_64_2" % name], ref["%s_64_1" % name], name, tolerance)
+
+
+GUARD_SCRIPT = r"""
+import ctypes, mmap, sys
+import numpy as np
+from _minTV import minTV
+from _AwminTV import AwminTV
+n = 64 * 256 * 256 * 4
+buf = mmap.mmap(-1, n + mmap.PAGESIZE)
+addr = ctypes.addressof(ctypes.c_char.from_buffer(buf))
+assert ctypes.CDLL(None).mprotect(ctypes.c_void_p(addr + n), mmap.PAGESIZE, 0) == 0
+img = np.frombuffer(buf, dtype=np.float32, count=n // 4).reshape(64, 256, 256)
+img[:] = np.random.default_rng(0).random((64, 256, 256), dtype=np.float32)
+out = {"minTV": minTV(img, 0.05, 5), "AwminTV": AwminTV(img, 0.05, 5, -0.005)}
+np.savez(sys.argv[1], **out)
+"""
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="uses mprotect for a guard page")
+def test_last_piece_thinner_than_the_halo(tmp_path):
+    # 6 MB: 64 slices in 22 pieces of 3, the last of 1, with a 2-slice halo. The halo after the
+    # last-but-one piece used to be copied from past the end of the image (an access violation on
+    # Windows; also 5 and 7 slices on 3 listings above). Here the image ends right before an
+    # inaccessible page.
+    script = tmp_path / "guard.py"
+    script.write_text(GUARD_SCRIPT)
+    out = tmp_path / "guard.npz"
+    env = dict(os.environ, TIGRE_SYCL_MEMORY_LIMIT_MB="6")
+    result = subprocess.run([sys.executable, str(script), str(out)], env=env,
+                            capture_output=True, text=True, timeout=600)
+    assert result.returncode == 0, (result.returncode, result.stdout + result.stderr)
+    for name, res in np.load(out).items():
+        assert np.isfinite(res).all(), name

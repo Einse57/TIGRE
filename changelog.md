@@ -60,6 +60,10 @@ thank you.
   older Linux distributions should build from source.
 
 ### Fixed
+- SYCL build: `minTV` and `AwminTV` copied part of the halo from past the end of the image when the
+  last piece was thinner than the halo (e.g. 64 slices with a 6 MB limit, or 7 slices on 3 devices):
+  an access violation on Windows, or intermittently an out-of-memory error. The copy now stops at the
+  end of the image.
 - `minTV`, `AwminTV` and `tvdenoise` failed on several GPUs (or when split for memory) when the image
   had so few z slices that the last pieces came out empty, e.g. 5 slices on 4 GPUs, or tvdenoise of
   one slice on 2 GPUs. The pieces are now chosen so that none is empty, using fewer GPUs if needed.
