@@ -2,8 +2,9 @@
 
 Upstream TIGRE runs only on NVIDIA GPUs through CUDA and has no CPU fallback. With the SYCL
 backend in this branch, the same Python code runs on Intel GPUs through Level Zero and on Intel CPUs
-through the Intel OpenCL CPU runtime. Tested hardware: an Intel Arc 140T integrated GPU and an Intel
-Arc Pro B50 discrete GPU, and the CPUs of the two machines below.
+through the Intel OpenCL CPU runtime. Tested hardware: an Intel Arc 140T integrated GPU, Intel
+Arc Pro B50 and Arc Pro B70 discrete GPUs, and the CPUs of the two machines below. The Arc Pro B70
+replaced the B50 in the desktop; see [Arc Pro B70](#arc-pro-b70) at the end.
 
 **Hardware and software:**
 - **Laptop:** Intel Core Ultra 9 285H, with an Intel Arc 140T integrated GPU (GPU driver 32.0.101.9033, Level Zero 1.17.39500+2); 64 GB RAM.
@@ -82,3 +83,40 @@ First call in the process, median of runs 2–5, in seconds:
 
 - **tvdenoise split into pieces, from the port of #872 and #873:** with 24, 12, 8 and 6 MB limits (a 64×256×256 random image, 10 and 100 iterations; the 128³ head phantom, 50 iterations), the split result is now bitwise equal to the unsplit one on all four devices; before, it differed by up to 23% of the peak value. With the Arc Pro B50 and the Core Ultra 7 265F in one process (`TIGRE_SYCL_ALL_DEVICES=1`), split and unsplit agree within 6.7e-7. The unsplit result changed in the first and last few slices, as in the CUDA build. minTV and AwminTV are unchanged: each piece is still normalised by its own gradient norm, so split results differ from unsplit ones by up to 2.1e-2 (minTV, 128³ head phantom, 8 MB). With a 6 MB limit, minTV ended the Python process on both machines, with both builds; this has not been looked into yet.
 - **Other second-call medians** moved by more than 5% and outside the previous run-to-run range (previous → this build, Ax excluded, see above): Core Ultra 9 285H small minTV 0.0024 → 0.00303 s; Arc Pro B50 128³ FDK 0.0244 → 0.023 s; Core Ultra 7 265F small Atb 0.00299 → 0.00184 s, small minTV 0.00247 → 0.00422 s and large Atb 6.3 → 5.96 s. The code of these operations did not change. All other second-call medians are within 5% of the previous figures or inside their run-to-run range.
+
+## Arc Pro B70
+
+The Arc Pro B50 in the desktop was replaced by an Intel Arc Pro B70, 32 GB (GPU driver 32.0.101.8976,
+Level Zero 1.15.39183+4). It reports 31906 MiB, of which TIGRE plans with 30311 MiB, so the large image
+is not split.
+Same machine, software, build (54e0ad1), inputs and method as above; the Core Ultra 7 265F was
+measured again in the same runs.
+
+Second call, median (min–max) of runs 2–5, in seconds; the Arc Pro B50 column is repeated from above:
+
+| Problem | Operation | Arc Pro B70 | Arc Pro B50 | B70/B50 |
+|---|---|---:|---:|---:|
+| Small | Ax | 0.000985 (0.000891–0.00101) | 0.000997 | 0.99 |
+| Small | Atb | 0.000971 (0.000965–0.00111) | 0.0011 | 0.88 |
+| Small | FDK | 0.00305 (0.00285–0.00349) | 0.00296 | 1.03 |
+| Small | minTV, 10 it. | 0.000814 (0.000804–0.000823) | 0.000953 | 0.85 |
+| 128³ | Ax | 0.00667 (0.00662–0.00683) | 0.01 | 0.66 |
+| 128³ | Atb | 0.00824 (0.00795–0.00829) | 0.0127 | 0.65 |
+| 128³ | FDK | 0.019 (0.0183–0.0195) | 0.023 | 0.83 |
+| 128³ | minTV, 10 it. | 0.00427 (0.00425–0.00431) | 0.00601 | 0.71 |
+| Large, 4.25 GiB | Ax | 1.61 (1.52–1.63) | 1.6 | 1.01 |
+| Large, 4.25 GiB | Atb | 1.22 (1.2–1.23) | 1.48 | 0.82 |
+| Large, 4.25 GiB | FDK | 1.25 (1.21–1.28) | 1.53 | 0.81 |
+| Large, 4.25 GiB | minTV, 10 it. | 2.37 (2.28–2.4) | 3.62 | 0.66 |
+
+- **First call:** B70/B50 0.94–1.00 for the small and 128³ problems (about 0.25 s, mostly start-up);
+  on the large volume Ax 1.84 s (0.98), Atb 1.47 s (0.83), FDK 1.48 s (0.84), minTV 2.61 s (0.68).
+- **Siddon Ax, 256³ random image, 64 angles:** cone beam 0.0341 s (B70/B50 0.71), parallel beam
+  0.0356 s (0.70).
+- **tvdenoise:** 128³ head phantom, 50 iterations, 0.0102 s; 64×256×256 random image, 100 iterations,
+  0.0473 s (no B50 figures).
+- **Core Ultra 7 265F** in the same runs: within 5% of the figures above at 128³ and on the large
+  volume; the small-problem times vary more from run to run (e.g. small FDK 0.00425 s).
+- **Parity:** Arc Pro B70 vs CPU device gives the same figures as the Arc Pro B50 vs CPU device above.
+  The B70 outputs are bitwise equal to the B50 outputs, except minTV (up to 1.8e-6 of the maximum at
+  128³ and 5.7e-5 on the large volume).
