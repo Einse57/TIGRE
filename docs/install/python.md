@@ -113,7 +113,7 @@ first one whose compiler it finds, in this order:
 |---|---|---|
 | `cuda` | NVIDIA | `CUDA_HOME` or `CUDA_PATH`, `nvcc` on the `PATH`, or the default CUDA install location |
 | `hip` | AMD | `ROCM_PATH` or `HIP_PATH`, `hipcc` on the `PATH`, or `/opt/rocm` |
-| `sycl` | Intel | `icpx` (`icx` on Windows) on the `PATH` |
+| `sycl` | Intel | the compiler in `TIGRE_SYCL_CXX`, or `icpx` (`icx` on Windows) on the `PATH` |
 | `metal` | Apple Silicon | a Mac with Apple Silicon |
 
 The build prints which backend it chose and why. To choose one yourself, set
@@ -206,8 +206,8 @@ TIGRE_BACKEND=sycl pip install --no-build-isolation --no-cache-dir .
 ```
 
 Without `TIGRE_BACKEND`, the build picks `sycl` only when it finds no CUDA or HIP
-compiler and `icpx` (`icx` on Windows) is on the `PATH`. `TIGRE_SYCL_CXX` selects a
-different SYCL compiler. On Windows, run `set TIGRE_BACKEND=sycl` and then the `pip`
+compiler and finds the SYCL compiler: `TIGRE_SYCL_CXX` if it is set, otherwise `icpx`
+(`icx` on Windows) on the `PATH`. `TIGRE_SYCL_CXX` also selects the compiler the build uses. On Windows, run `set TIGRE_BACKEND=sycl` and then the `pip`
 command from an x64 Visual Studio developer prompt in which `icx` and its libraries
 are on `PATH` and `LIB`.
 

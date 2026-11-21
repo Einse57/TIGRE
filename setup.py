@@ -30,8 +30,8 @@ if no_pinned:
 IS_WINDOWS = sys.platform == "win32"
 
 # The SYCL backend (Common/SYCL, oneAPI DPC++) is built with TIGRE_BACKEND=sycl, or
-# when no CUDA or HIP compiler is found and icpx (icx on Windows) is on the PATH.
-# TIGRE_SYCL_CXX overrides the compiler. CUDA is not needed for this build.
+# when no CUDA or HIP compiler is found and the SYCL compiler is: TIGRE_SYCL_CXX if
+# it is set, otherwise icpx (icx on Windows). CUDA is not needed for this build.
 SYCL_CXX = os.environ.get("TIGRE_SYCL_CXX", "icx" if IS_WINDOWS else "icpx")
 # -fp-model=precise keeps IEEE inf/NaN handling, which the ray tracing relies on.
 if IS_WINDOWS:
@@ -81,10 +81,11 @@ def _detect_hip():
 
 
 def _detect_sycl():
-    compiler = "icx" if IS_WINDOWS else "icpx"
-    if shutil.which(compiler):
-        return compiler + " (oneAPI DPC++) is on the PATH"
-    return None
+    if not shutil.which(SYCL_CXX):
+        return None
+    if os.environ.get("TIGRE_SYCL_CXX"):
+        return "TIGRE_SYCL_CXX=" + SYCL_CXX + " is found"
+    return SYCL_CXX + " (oneAPI DPC++) is on the PATH"
 
 
 def _detect_metal():
