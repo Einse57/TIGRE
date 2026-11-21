@@ -13,6 +13,9 @@ thank you.
   Intel GPUs (Level Zero) and Intel CPUs (Intel OpenCL CPU runtime). The Python build no longer
   stops at `sycl`; without `TIGRE_BACKEND` it is chosen only when no CUDA or HIP compiler is found
   (#885). See `docs/install/python.md`. MATLAB's `Compile -backend sycl` still stops for now.
+- `docs/technical-notes/sycl/backend_times.py`: times the projectors and algorithms on the backend
+  TIGRE was built with and saves the measurements as JSON, so that CUDA and SYCL builds can be
+  compared on the same problem (`--compare`).
 
 ## 3.3.0 (2026-11-21)
 
