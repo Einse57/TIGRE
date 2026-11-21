@@ -10,7 +10,7 @@ By participating you agree to follow our [Code of Conduct](CODE_OF_CONDUCT.md).
 
 - **Questions about using TIGRE** (geometry setup, which algorithm to use, loading
   your scanner data): please open a [Discussion](https://github.com/CERN/TIGRE/discussions)
-  rather than an issue. Check the [FAQ](Frontispiece/FAQ.md) first.
+  rather than an issue. Check the [FAQ](https://cern.github.io/TIGRE/user-guide/troubleshooting.html) first.
 - **Bugs**: open an [issue](https://github.com/CERN/TIGRE/issues/new/choose) using the
   bug template. Include a minimal script that reproduces the problem, and your OS,
   GPU, CUDA version and MATLAB/Python version. Most TIGRE bugs depend on these.
@@ -51,8 +51,22 @@ pytest
 Tests live in `Python/tests/`. Tests that need a GPU are marked with
 `@pytest.mark.gpu` (or `pytestmark = pytest.mark.gpu` for a whole file) and are
 skipped automatically on machines without one, which is how they run on GitHub
-Actions. Please run the full suite on a GPU machine before submitting changes to
+Actions. Please run the suite on a GPU machine before submitting changes to
 projectors, kernels or algorithms.
+
+A plain `pytest` runs the core suite (a few minutes with a GPU). Tests for rare
+edge cases and stress tests, such as running with almost no free GPU memory,
+thousands of repeated calls or images that must be split, are marked
+`extended` and are not run by default:
+
+```bash
+pytest -m extended                     # only the extended tests
+pytest -m "extended or not extended"   # everything
+```
+
+Run the extended tests too when you change CUDA code, memory handling or how
+the image is split between GPUs. Mark a new test `extended` if it guards a rare
+case and takes long or needs a particular amount of free GPU memory.
 
 MATLAB tests are in `MATLAB/Tests/`.
 
@@ -66,6 +80,9 @@ MATLAB tests are in `MATLAB/Tests/`.
    `Python/tests/test_krylov_restart_and_norms.py` for an example).
 4. Update the demos and documentation if you change user-facing behaviour.
 5. Add a line to [`changelog.md`](changelog.md) under the next release.
+   Do not rename, remove or change the meaning of anything public (including
+   `geo` fields and their conventions) without first deprecating it, as described
+   in the [compatibility policy](https://cern.github.io/TIGRE/user-guide/compatibility.html).
 6. Open the pull request and fill in the template.
 
 ### Code style

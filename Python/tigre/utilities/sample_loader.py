@@ -1,18 +1,35 @@
 from __future__ import division
 import os
+import site
+import sys
 import numpy as np
 import scipy.io
 import scipy.ndimage
 
 
 def load_head_phantom(number_of_voxels=None):
+    """The head phantom used in TIGRE's demos and tests.
+
+    Parameters
+    ----------
+    number_of_voxels : numpy.ndarray, optional
+        Size ``(z, y, x)`` to resample the phantom to. Default ``(128, 128, 128)``.
+
+    Returns
+    -------
+    numpy.ndarray
+        The phantom, float32, with values roughly between 0 and 1.
+    """
     if number_of_voxels is None:
         number_of_voxels = np.array((128, 128, 128))
     list_relative_path = [
         "../../../Common/data/head.mat", # Local
         "../../data/head.mat",   # setup.py
         "../../../../data/head.mat",  # pip 
-        "../data/head.mat" 
+        "../data/head.mat",
+        # pip installs data_files under the environment prefix (<prefix>/data/head.mat)
+        os.path.join(sys.prefix, "data", "head.mat"),
+        os.path.join(site.getuserbase(), "data", "head.mat"),  # pip install --user
     ]
     found = False
     for relative_path in list_relative_path:

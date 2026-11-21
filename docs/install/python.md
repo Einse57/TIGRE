@@ -104,6 +104,28 @@ pip install .
 :::
 ::::
 
+### Choosing the GPU backend
+
+TIGRE is built for one GPU backend. When you build from source, it uses the
+first one whose compiler it finds, in this order:
+
+| Backend | GPUs | Found from |
+|---|---|---|
+| `cuda` | NVIDIA | `CUDA_HOME` or `CUDA_PATH`, `nvcc` on the `PATH`, or the default CUDA install location |
+| `hip` | AMD | `ROCM_PATH` or `HIP_PATH`, `hipcc` on the `PATH`, or `/opt/rocm` |
+| `sycl` | Intel | `icpx` (`icx` on Windows) on the `PATH` |
+| `metal` | Apple Silicon | a Mac with Apple Silicon |
+
+The build prints which backend it chose and why. To choose one yourself, set
+`TIGRE_BACKEND`, for example `TIGRE_BACKEND=cuda pip install .`
+(`set TIGRE_BACKEND=cuda` first on Windows).
+
+On this branch `cuda` and `sycl` can be built (`sycl`: see the SYCL section
+below). The others are being added: `hip` in
+[#747](https://github.com/CERN/TIGRE/pull/747) and `metal` in
+[#876](https://github.com/CERN/TIGRE/issues/876). If the build picks one of
+them, it stops and says so; set `TIGRE_BACKEND=cuda` to build for NVIDIA GPUs.
+
 ## Conda (unofficial)
 
 CCPi Tomographic Imaging builds and maintains a conda package:
@@ -164,3 +186,42 @@ TIGRE_NO_PINNED_MEMORY=1 pip install --no-cache-dir git+https://github.com/CERN/
 `--no-cache-dir` stops pip from reusing a wheel it built earlier with pinned
 memory. The same works with `pip install .` from a clone. The prebuilt wheels
 always use pinned memory.
+
+## SYCL build (Intel oneAPI)
+
+TIGRE can also be compiled with SYCL instead of CUDA, using the Intel oneAPI
+DPC++/C++ compiler. This build needs no CUDA toolkit and runs on the devices
+your SYCL runtime exposes.
+
+Requirements:
+
+- Python 3.11–3.14, numpy and Cython
+- The oneAPI DPC++/C++ compiler (`icpx` on Linux, `icx` on Windows) on the `PATH`
+- A SYCL runtime for your device (for a CPU, the Intel OpenCL CPU runtime)
+
+From a local clone:
+
+```sh
+TIGRE_SYCL=1 pip install --no-build-isolation --no-cache-dir .
+```
+
+`TIGRE_BACKEND=sycl` does the same as `TIGRE_SYCL=1`. `TIGRE_SYCL_CXX` selects a different SYCL compiler. On Windows, run
+`set TIGRE_SYCL=1` and then the `pip` command from an x64 Visual Studio developer
+prompt in which `icx` and its libraries are on `PATH` and `LIB`.
+
+TIGRE lists the Level Zero GPUs if there are any, otherwise the other GPUs,
+otherwise the remaining SYCL devices (such as the CPU). With
+`TIGRE_SYCL_ALL_DEVICES=1`, the remaining devices are listed after the GPUs, so
+`gpuids` can include a GPU and the CPU together. `gpuids` index into that
+list, and `ONEAPI_DEVICE_SELECTOR` filters it as usual. All projectors,
+backprojectors, TV/PICCS regularisers and `CTnoise.add` are available.
+`CTnoise.add` uses a different random number generator than the CUDA build, so
+its values differ for the same input. PyTorch CUDA tensors and CuPy arrays passed
+to `tigre.Ax` and `tigre.Atb` are copied through host memory, since SYCL devices
+cannot read CUDA memory; the result comes back as the same kind of array, on the
+same GPU.
+
+Tested on an Intel Xeon processor with the Intel OpenCL CPU runtime
+(oneAPI 2025.2, Linux), and on an Intel Arc 140T GPU through Level Zero and an
+Intel Core Ultra 9 285H with the Intel OpenCL CPU runtime (oneAPI 2025.2,
+Windows 11).

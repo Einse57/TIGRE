@@ -54,6 +54,7 @@ Codes  : https://github.com/CERN/TIGRE
 #define MAXTHREADS 1024
 
 #include "PICCS.hpp"
+#include "tigre_release_on_error.hpp"
 
 
 
@@ -62,8 +63,7 @@ Codes  : https://github.com/CERN/TIGRE
 do { \
         cudaError_t __err = cudaGetLastError(); \
         if (__err != cudaSuccess) { \
-                mexPrintf("ERROR in: %s \n",msg);\
-                mexErrMsgIdAndTxt("err",cudaGetErrorString(__err));\
+                tigreCudaError("err", msg, cudaGetErrorString(__err));\
         } \
 } while (0)
     
@@ -119,20 +119,20 @@ do { \
         if (z >= depth || y >= rows || x >= cols)
             return;
         unsigned long size2d = rows*cols;
-        unsigned long long idx = z * size2d + y * cols + x;
+        size_t idx = (size_t)z * size2d + y * cols + x;
 
         float uidx = u[idx];
 
         if ( z - 1 >= 0 && z<depth) {
-            grad[0] = (uidx-u[(z-1)*size2d + y*cols + x]) ;
+            grad[0] = (uidx-u[(size_t)(z-1)*size2d + y*cols + x]) ;
         }
         
         if ( y - 1 >= 0 && y<rows){
-            grad[1] = (uidx-u[z*size2d + (y-1)*cols + x]) ;
+            grad[1] = (uidx-u[(size_t)z*size2d + (y-1)*cols + x]) ;
         }
         
         if ( x - 1 >= 0 && x<cols) {
-            grad[2] = (uidx-u[z*size2d + y*cols + (x-1)]);
+            grad[2] = (uidx-u[(size_t)z*size2d + y*cols + (x-1)]);
         }
     }
     
@@ -141,7 +141,7 @@ do { \
         unsigned long x = threadIdx.x + blockIdx.x * blockDim.x;
         unsigned long y = threadIdx.y + blockIdx.y * blockDim.y;
         unsigned long z = threadIdx.z + blockIdx.z * blockDim.z;
-        unsigned long long idx = z * rows * cols + y * cols + x;
+        size_t idx = (size_t)z * (rows * cols) + y * cols + x;
         if ( x >= cols || y >= rows || z >= depth )
             return;
         
@@ -174,7 +174,7 @@ do { \
         extern __shared__ volatile float sdata[];
         //http://stackoverflow.com/a/35133396/1485872
         size_t tid = threadIdx.x;
-        size_t i = blockIdx.x*blockDim.x + tid;
+        size_t i = (size_t)blockIdx.x*blockDim.x + tid;
         size_t gridSize = blockDim.x*gridDim.x;
         float mySum = 0;
         float value=0;
@@ -202,7 +202,7 @@ do { \
         __syncthreads();
         
         
-#if (__CUDART_VERSION >= 9000)
+#if (CUDART_VERSION >= 9000)
         if ( tid < 32 )
         {
             mySum = sdata[tid] + sdata[tid + 32];
@@ -222,7 +222,7 @@ do { \
         extern __shared__ volatile float sdata[];
         //http://stackoverflow.com/a/35133396/1485872
         size_t tid = threadIdx.x;
-        size_t i = blockIdx.x*blockDim.x + tid;
+        size_t i = (size_t)blockIdx.x*blockDim.x + tid;
         size_t gridSize = blockDim.x*gridDim.x;
         float mySum = 0;
        // float value=0;
@@ -249,7 +249,7 @@ do { \
         __syncthreads();
         
         
-#if (__CUDART_VERSION >= 9000)
+#if (CUDART_VERSION >= 9000)
         if ( tid < 32 )
         {
             mySum = sdata[tid] + sdata[tid + 32];
@@ -283,29 +283,34 @@ bool isnan_cuda(float* vec, size_t size){
      
         
     
-        size_t total_pixels = image_size[0] * image_size[1]  * image_size[2] ;
+        size_t total_pixels = (size_t)image_size[0]*image_size[1]  * image_size[2] ;
         size_t mem_size = sizeof(float) * total_pixels;
         
-        float *d_image,*d_prior,*d_dpiccsTV, *d_dimgTV,*d_aux_small,*d_aux_image, *d_norm2;
+        float *d_image=NULL,*d_prior=NULL,*d_dpiccsTV=NULL, *d_dimgTV=NULL,*d_aux_small=NULL,*d_aux_image=NULL, *d_norm2=NULL;
+        // Release the device buffers if the call is left by an error (see
+        // tigre_release_on_error.hpp); cudaFree(NULL) does nothing.
+        tigre::ReleaseOnError onError;
+        onError.add([&]{ cudaFree(d_image); cudaFree(d_prior); cudaFree(d_dpiccsTV); cudaFree(d_dimgTV);
+                         cudaFree(d_aux_small); cudaFree(d_aux_image); cudaFree(d_norm2); });
         // memory for image
-        cudaMalloc(&d_image, mem_size);
-        cudaMalloc(&d_prior, mem_size);
+        tigre::checkMalloc(cudaMalloc(&d_image, mem_size), "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)", mem_size);
+        tigre::checkMalloc(cudaMalloc(&d_prior, mem_size), "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)", mem_size);
 
         cudaCheckErrors("Malloc Image error");
         cudaMemcpy(d_image, img, mem_size, cudaMemcpyHostToDevice);
         cudaMemcpy(d_prior, prior, mem_size, cudaMemcpyHostToDevice);
         cudaCheckErrors("Memory Malloc and Memset: SRC");
         // memory for df
-        cudaMalloc(&d_dimgTV, mem_size);
-        cudaMalloc(&d_dpiccsTV, mem_size);
+        tigre::checkMalloc(cudaMalloc(&d_dimgTV, mem_size), "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)", mem_size);
+        tigre::checkMalloc(cudaMalloc(&d_dpiccsTV, mem_size), "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)", mem_size);
         cudaCheckErrors("Memory Malloc and Memset: TV");
-        cudaMalloc(&d_norm2, mem_size);
+        tigre::checkMalloc(cudaMalloc(&d_norm2, mem_size), "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)", mem_size);
         cudaCheckErrors("Memory Malloc and Memset: TV");
-        cudaMalloc(&d_aux_image, mem_size);
+        tigre::checkMalloc(cudaMalloc(&d_aux_image, mem_size), "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)", mem_size);
         cudaCheckErrors("Memory Malloc and Memset: TV");
         
         // memory for L2norm auxiliar
-        cudaMalloc(&d_aux_small, sizeof(float)*(total_pixels + MAXTHREADS - 1) / MAXTHREADS);
+        tigre::checkMalloc(cudaMalloc(&d_aux_small, sizeof(float)*(total_pixels + MAXTHREADS - 1) / MAXTHREADS), "CBCT:CUDA:PICCS", "PICCS minimization (minPICCS)", sizeof(float)*(total_pixels + MAXTHREADS - 1) / MAXTHREADS);
         cudaCheckErrors("Memory Malloc and Memset: NORMAux");
         
         
@@ -390,6 +395,7 @@ bool isnan_cuda(float* vec, size_t size){
         
         cudaMemcpy(dst, d_image, mem_size, cudaMemcpyDeviceToHost);
         cudaCheckErrors("Copy result back");
+        onError.dismiss();  // from here on the function releases everything itself
         
         cudaFree(d_image);
         cudaFree(d_dimgTV);

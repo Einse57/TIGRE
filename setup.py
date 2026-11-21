@@ -2,6 +2,7 @@ import copy
 import glob
 import os
 from os.path import join as pjoin
+import platform
 import re
 import subprocess
 import sys
@@ -27,6 +28,113 @@ if no_pinned:
     define_macros.append(("NO_PINNED_MEMORY",None))     
 
 IS_WINDOWS = sys.platform == "win32"
+
+# Build the SYCL (oneAPI) backend in Common/SYCL instead of the CUDA one. Set
+# TIGRE_BACKEND=sycl (or TIGRE_SYCL=1) and have the oneAPI DPC++ compiler on the
+# PATH (icpx, or icx on Windows; override with TIGRE_SYCL_CXX). CUDA is not
+# needed for this build.
+_TIGRE_SYCL_ENV = os.environ.get("TIGRE_SYCL", "").strip().lower() not in (
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+)
+SYCL_CXX = os.environ.get("TIGRE_SYCL_CXX", "icx" if IS_WINDOWS else "icpx")
+# -fp-model=precise keeps IEEE inf/NaN handling, which the ray tracing relies on.
+if IS_WINDOWS:
+    # icx on Windows takes MSVC-style options.
+    SYCL_COMPILE_FLAGS = ["-fsycl", "/fp:precise", "/std:c++17", "/EHsc"]
+    SYCL_LINK_FLAGS = []
+else:
+    SYCL_COMPILE_FLAGS = ["-fsycl", "-fp-model=precise", "-std=c++17", "-O2"]
+    SYCL_LINK_FLAGS = ["-fsycl"]
+
+
+# GPU backend. TIGRE_BACKEND=cuda|hip|sycl|metal chooses it; when it is not set,
+# the first backend whose compiler is installed is used, in this order. CUDA is
+# first, so machines that build CUDA today keep doing so (for example a laptop
+# with an NVIDIA GPU and an Intel integrated GPU). CUDA and SYCL (Common/SYCL)
+# are built in this version; the others are being added (see BACKEND_PENDING).
+BACKENDS = ("cuda", "hip", "sycl", "metal")
+BACKEND_PENDING = {
+    "hip": "AMD GPUs, https://github.com/CERN/TIGRE/pull/747",
+    "metal": "Apple Silicon, https://github.com/CERN/TIGRE/issues/876",
+}
+
+
+def _detect_cuda():
+    for var in ("CUDA_HOME", "CUDA_PATH"):
+        if os.environ.get(var):
+            return var + " is set"
+    if shutil.which("nvcc"):
+        return "nvcc is on the PATH"
+    if IS_WINDOWS:
+        if glob.glob("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v*.*/bin/nvcc.exe"):
+            return "CUDA is installed in C:/Program Files/NVIDIA GPU Computing Toolkit"
+    elif os.path.exists("/usr/local/cuda/bin/nvcc"):
+        return "CUDA is installed in /usr/local/cuda"
+    return None
+
+
+def _detect_hip():
+    for var in ("ROCM_PATH", "HIP_PATH"):
+        if os.environ.get(var):
+            return var + " is set"
+    if shutil.which("hipcc"):
+        return "hipcc is on the PATH"
+    if not IS_WINDOWS and os.path.exists("/opt/rocm/bin/hipcc"):
+        return "ROCm is installed in /opt/rocm"
+    return None
+
+
+def _detect_sycl():
+    compiler = "icx" if IS_WINDOWS else "icpx"
+    if shutil.which(compiler):
+        return compiler + " (oneAPI DPC++) is on the PATH"
+    return None
+
+
+def _detect_metal():
+    if sys.platform == "darwin" and platform.machine() == "arm64":
+        return "this is a Mac with Apple Silicon"
+    return None
+
+
+def select_backend():
+    """Return (backend, reason): from TIGRE_BACKEND, or the first compiler found."""
+    requested = os.environ.get("TIGRE_BACKEND", "").strip().lower()
+    if _TIGRE_SYCL_ENV:
+        if requested and requested != "sycl":
+            raise RuntimeError("TIGRE_SYCL is set but TIGRE_BACKEND=" + requested + ". Set only one of them.")
+        return "sycl", "set by TIGRE_SYCL"
+    if requested:
+        if requested not in BACKENDS:
+            raise RuntimeError(
+                "TIGRE_BACKEND=" + requested + " is not known. Use one of: " + ", ".join(BACKENDS) + "."
+            )
+        return requested, "set by TIGRE_BACKEND"
+    detectors = {"cuda": _detect_cuda, "hip": _detect_hip, "sycl": _detect_sycl, "metal": _detect_metal}
+    for backend in BACKENDS:
+        reason = detectors[backend]()
+        if reason:
+            return backend, reason
+    raise RuntimeError(
+        "TIGRE could not find a GPU compiler. Install the CUDA toolkit (NVIDIA GPUs) and make "
+        "sure nvcc is on the PATH, or set CUDA_HOME or CUDA_PATH to its folder. To choose a "
+        "backend yourself, set TIGRE_BACKEND to one of: " + ", ".join(BACKENDS) + "."
+    )
+
+
+BACKEND, BACKEND_REASON = select_backend()
+if BACKEND in BACKEND_PENDING:
+    raise RuntimeError(
+        "TIGRE: the " + BACKEND + " backend (" + BACKEND_REASON + ") is not available in this "
+        "version of TIGRE yet; it is being added for " + BACKEND_PENDING[BACKEND] + ". "
+        "To build for NVIDIA GPUs instead, install the CUDA toolkit and set TIGRE_BACKEND=cuda."
+    )
+print("TIGRE: building the " + BACKEND + " backend (" + BACKEND_REASON + ").")
+USE_SYCL = BACKEND == "sycl"
 
 
 # Code from https://github.com/pytorch/pytorch/blob/master/torch/utils/cpp_extension.py
@@ -118,19 +226,22 @@ def _is_cuda_file(path):
     return os.path.splitext(path)[1] in [".cu", ".cuh"]
 
 
-CUDA, CUDA_VERSION = locate_cuda()
+if USE_SYCL:
+    CUDA = {"home": None, "include": "", "lib64": ""}
+else:
+    CUDA, CUDA_VERSION = locate_cuda()
 
-cuda_version = 11.0
-try:
-    cuda_version = float(CUDA_VERSION)
-except ValueError:
-    cuda_list = re.findall(r'\d+', CUDA_VERSION)
-    cuda_version = float( str(cuda_list[0] + '.' + cuda_list[1]))
+    cuda_version = 11.0
+    try:
+        cuda_version = float(CUDA_VERSION)
+    except ValueError:
+        cuda_list = re.findall(r'\d+', CUDA_VERSION)
+        cuda_version = float( str(cuda_list[0] + '.' + cuda_list[1]))
 
-# Insert CUDA CC arguments
-for item in get_cuda_cc(CUDA["home"]):
-    str_arg = f"-gencode=arch=compute_{item},code=sm_{item}"
-    COMPUTE_CAPABILITY_ARGS.insert(0, str_arg)
+    # Insert CUDA CC arguments
+    for item in get_cuda_cc(CUDA["home"]):
+        str_arg = f"-gencode=arch=compute_{item},code=sm_{item}"
+        COMPUTE_CAPABILITY_ARGS.insert(0, str_arg)
 
 
 # Obtain the numpy include directory.  This logic works across numpy versions.
@@ -188,7 +299,48 @@ class BuildExtension(build_ext):
         build_ext.__init__(self, *args, **kwargs)
         self.no_python_abi_suffix = kwargs.get("no_python_abi_suffix", False)
 
+    def _use_sycl_msvc(self):
+        """Compile with icx instead of cl.exe and link through icx -fsycl, which
+        adds the SYCL device images and runtime library before calling link.exe."""
+        compiler = self.compiler
+        if not compiler.initialized:
+            compiler.initialize()
+        compiler.cc = SYCL_CXX
+        # Link-time code generation is a cl.exe/link.exe feature that icx does not use.
+        compiler.compile_options = [o for o in compiler.compile_options if o != "/GL"]
+
+        def link(target_desc, objects, output_filename, output_dir=None, libraries=None,
+                 library_dirs=None, runtime_library_dirs=None, export_symbols=None,
+                 debug=False, extra_preargs=None, extra_postargs=None, build_temp=None,
+                 target_lang=None):
+            objects, output_dir = compiler._fix_object_args(objects, output_dir)
+            libraries, library_dirs, _ = compiler._fix_lib_args(libraries, library_dirs, runtime_library_dirs)
+            if output_dir is not None:
+                output_filename = os.path.join(output_dir, output_filename)
+            os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
+            link_opts = ["/LIBPATH:" + d for d in library_dirs]
+            link_opts += [lib if lib.endswith(".lib") else lib + ".lib" for lib in libraries]
+            link_opts += ["/EXPORT:" + sym for sym in (export_symbols or [])]
+            cmd = [SYCL_CXX, "-fsycl", "/nologo", "/LD", "/MD"] + list(extra_preargs or [])
+            cmd += objects + ["/Fe:" + output_filename] + list(extra_postargs or [])
+            compiler.spawn(cmd + ["/link"] + link_opts)
+
+        compiler.link = link
+
     def build_extensions(self):
+        if USE_SYCL:
+            # Compile and link everything with the DPC++ compiler.
+            if self.compiler.compiler_type == "msvc":
+                self._use_sycl_msvc()
+                build_ext.build_extensions(self)
+                return
+            # compiler_so_cxx and linker_so_cxx are used for C++ sources by newer setuptools.
+            for name in ("compiler_so", "compiler_so_cxx", "compiler_cxx", "linker_so", "linker_so_cxx"):
+                command = getattr(self.compiler, name, None)
+                if command:
+                    self.compiler.set_executable(name, [SYCL_CXX] + list(command[1:]))
+            build_ext.build_extensions(self)
+            return
         # Register .cu and .cuh as valid source extensions.
         self.compiler.src_extensions += [".cu", ".cuh"]
         # Save the original _compile method for later.
@@ -352,7 +504,7 @@ def include_headers(filename_list, sdist=False):
             header[1] = ".hpp"
             header_list.append("".join(header))
 
-    filename_list += ["Common/CUDA/types_TIGRE.hpp", "Common/CUDA/errors.hpp"]
+    filename_list += ["Common/CUDA/types_TIGRE.hpp", "Common/CUDA/errors.hpp", "Common/CUDA/tigre_release_on_error.hpp"]
     return filename_list + header_list
 
 
@@ -522,13 +674,51 @@ RandomNumberGenerator_ext = Extension(
     include_dirs=[NUMPY_INCLUDE, CUDA["include"], "Common/CUDA/"],
 )
 
-print(find_packages())
+
+def _sycl_extension(ext):
+    """Point an extension at the SYCL sources in Common/SYCL."""
+    sources = []
+    for source in ext.sources:
+        name, extension = os.path.splitext(source)
+        if source.startswith("Common/CUDA/") and (
+            extension == ".cu" or source.endswith("GpuIds.cpp")
+        ):
+            source = "Common/SYCL/" + os.path.basename(name) + ".cpp"
+        sources.append(source)
+    # tigre_sycl.cpp reports through TIGRE_common (errors and warnings), so every
+    # SYCL extension needs it, including _gpuUtils.
+    if "Common/CUDA/TIGRE_common.cpp" not in sources:
+        sources.insert(0, "Common/CUDA/TIGRE_common.cpp")
+    ext.sources = sources + ["Common/SYCL/tigre_sycl.cpp"]
+    ext.define_macros = define_macros + [("TIGRE_SYCL_BUILD", "1")]
+    ext.library_dirs = []
+    ext.libraries = []
+    ext.runtime_library_dirs = []
+    ext.include_dirs = [NUMPY_INCLUDE, "Common/SYCL/", "Common/CUDA/"]
+    ext.extra_compile_args = SYCL_COMPILE_FLAGS
+    ext.extra_link_args = SYCL_LINK_FLAGS
+    return ext
+
+
+ext_modules = [
+    minPICCS_ext,
+    Ax_ext,
+    Atb_ext,
+    tv_proximal_ext,
+    minTV_ext,
+    AwminTV_ext,
+    gpuUtils_ext,
+    RandomNumberGenerator_ext,
+]
+if USE_SYCL:
+    ext_modules = [_sycl_extension(ext) for ext in ext_modules]
+
 
 setup(
     packages=find_packages(),
     include_package_data=True,
     data_files=[("data", ["Common/data/head.mat"])],
-    ext_modules=[minPICCS_ext, Ax_ext, Atb_ext, tv_proximal_ext, minTV_ext, AwminTV_ext, gpuUtils_ext, RandomNumberGenerator_ext],
+    ext_modules=ext_modules,
     py_modules=["tigre.py"],
     cmdclass={"build_ext": BuildExtension},
     # since the package has c code, the egg cannot be zipped
