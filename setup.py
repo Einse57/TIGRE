@@ -717,10 +717,6 @@ ext_modules = [
 # Extensions whose sources are not in Common/SYCL yet. The SYCL build leaves them out,
 # and the Python functions that need them raise ImportError when they are called.
 SYCL_PENDING = {
-    "_tv_proximal",
-    "_minTV",
-    "_AwminTV",
-    "_minPICCS",
     "_RandomNumberGenerator",
 }
 if USE_SYCL:
