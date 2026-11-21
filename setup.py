@@ -29,16 +29,28 @@ if no_pinned:
 
 IS_WINDOWS = sys.platform == "win32"
 
+# The SYCL backend (Common/SYCL, oneAPI DPC++) is built with TIGRE_BACKEND=sycl, or
+# when no CUDA or HIP compiler is found and icpx (icx on Windows) is on the PATH.
+# TIGRE_SYCL_CXX overrides the compiler. CUDA is not needed for this build.
+SYCL_CXX = os.environ.get("TIGRE_SYCL_CXX", "icx" if IS_WINDOWS else "icpx")
+# -fp-model=precise keeps IEEE inf/NaN handling, which the ray tracing relies on.
+if IS_WINDOWS:
+    # icx on Windows takes MSVC-style options.
+    SYCL_COMPILE_FLAGS = ["-fsycl", "/fp:precise", "/std:c++17", "/EHsc"]
+    SYCL_LINK_FLAGS = []
+else:
+    SYCL_COMPILE_FLAGS = ["-fsycl", "-fp-model=precise", "-std=c++17", "-O2"]
+    SYCL_LINK_FLAGS = ["-fsycl"]
+
 
 # GPU backend. TIGRE_BACKEND=cuda|hip|sycl|metal chooses it; when it is not set,
 # the first backend whose compiler is installed is used, in this order. CUDA is
 # first, so machines that build CUDA today keep doing so (for example a laptop
-# with an NVIDIA GPU and an Intel integrated GPU). Only CUDA is built in this
-# version; the others are being added (see BACKEND_PENDING).
+# with an NVIDIA GPU and an Intel integrated GPU). CUDA and SYCL (Common/SYCL)
+# are built in this version; the others are being added (see BACKEND_PENDING).
 BACKENDS = ("cuda", "hip", "sycl", "metal")
 BACKEND_PENDING = {
     "hip": "AMD GPUs, https://github.com/CERN/TIGRE/pull/747",
-    "sycl": "Intel GPUs, https://github.com/CERN/TIGRE/issues/885",
     "metal": "Apple Silicon, https://github.com/CERN/TIGRE/issues/876",
 }
 
@@ -110,6 +122,7 @@ if BACKEND in BACKEND_PENDING:
         "To build for NVIDIA GPUs instead, install the CUDA toolkit and set TIGRE_BACKEND=cuda."
     )
 print("TIGRE: building the " + BACKEND + " backend (" + BACKEND_REASON + ").")
+USE_SYCL = BACKEND == "sycl"
 
 
 # Code from https://github.com/pytorch/pytorch/blob/master/torch/utils/cpp_extension.py
@@ -201,31 +214,34 @@ def _is_cuda_file(path):
     return os.path.splitext(path)[1] in [".cu", ".cuh"]
 
 
-CUDA, CUDA_VERSION = locate_cuda()
-
-cuda_version = 11.0
-try:
-    cuda_version = float(CUDA_VERSION)
-except ValueError:
-    cuda_list = re.findall(r'\d+', CUDA_VERSION)
-    cuda_version = float( str(cuda_list[0] + '.' + cuda_list[1]))
-
-# GPU architectures to compile for. Default: every one this nvcc supports (as for releases). For development and
-# testing, TIGRE_CUDA_ARCH limits them, which makes the build several times faster; the result then runs only on
-# those GPUs. Examples: TIGRE_CUDA_ARCH=89 (RTX 40xx), TIGRE_CUDA_ARCH=75,89, or TIGRE_CUDA_ARCH=native (the GPUs
-# in this machine; nvcc 11.6 or newer).
-_arch = os.environ.get("TIGRE_CUDA_ARCH", "").strip().lower()
-if _arch == "native":
-    COMPUTE_CAPABILITY_ARGS.insert(0, "-arch=native")
-elif _arch:
-    for item in re.findall(r"\d+", _arch):
-        COMPUTE_CAPABILITY_ARGS.insert(0, f"-gencode=arch=compute_{item},code=sm_{item}")
+if USE_SYCL:
+    CUDA = {"home": None, "include": "", "lib64": ""}
 else:
-    for item in get_cuda_cc(CUDA["home"]):
-        str_arg = f"-gencode=arch=compute_{item},code=sm_{item}"
-        COMPUTE_CAPABILITY_ARGS.insert(0, str_arg)
-if _arch:
-    print("TIGRE: compiling only for the GPU architectures in TIGRE_CUDA_ARCH=" + _arch)
+    CUDA, CUDA_VERSION = locate_cuda()
+
+    cuda_version = 11.0
+    try:
+        cuda_version = float(CUDA_VERSION)
+    except ValueError:
+        cuda_list = re.findall(r'\d+', CUDA_VERSION)
+        cuda_version = float( str(cuda_list[0] + '.' + cuda_list[1]))
+
+    # GPU architectures to compile for. Default: every one this nvcc supports (as for releases). For development and
+    # testing, TIGRE_CUDA_ARCH limits them, which makes the build several times faster; the result then runs only on
+    # those GPUs. Examples: TIGRE_CUDA_ARCH=89 (RTX 40xx), TIGRE_CUDA_ARCH=75,89, or TIGRE_CUDA_ARCH=native (the GPUs
+    # in this machine; nvcc 11.6 or newer).
+    _arch = os.environ.get("TIGRE_CUDA_ARCH", "").strip().lower()
+    if _arch == "native":
+        COMPUTE_CAPABILITY_ARGS.insert(0, "-arch=native")
+    elif _arch:
+        for item in re.findall(r"\d+", _arch):
+            COMPUTE_CAPABILITY_ARGS.insert(0, f"-gencode=arch=compute_{item},code=sm_{item}")
+    else:
+        for item in get_cuda_cc(CUDA["home"]):
+            str_arg = f"-gencode=arch=compute_{item},code=sm_{item}"
+            COMPUTE_CAPABILITY_ARGS.insert(0, str_arg)
+    if _arch:
+        print("TIGRE: compiling only for the GPU architectures in TIGRE_CUDA_ARCH=" + _arch)
 
 
 # Obtain the numpy include directory.  This logic works across numpy versions.
@@ -283,7 +299,48 @@ class BuildExtension(build_ext):
         build_ext.__init__(self, *args, **kwargs)
         self.no_python_abi_suffix = kwargs.get("no_python_abi_suffix", False)
 
+    def _use_sycl_msvc(self):
+        """Compile with icx instead of cl.exe and link through icx -fsycl, which
+        adds the SYCL device images and runtime library before calling link.exe."""
+        compiler = self.compiler
+        if not compiler.initialized:
+            compiler.initialize()
+        compiler.cc = SYCL_CXX
+        # Link-time code generation is a cl.exe/link.exe feature that icx does not use.
+        compiler.compile_options = [o for o in compiler.compile_options if o != "/GL"]
+
+        def link(target_desc, objects, output_filename, output_dir=None, libraries=None,
+                 library_dirs=None, runtime_library_dirs=None, export_symbols=None,
+                 debug=False, extra_preargs=None, extra_postargs=None, build_temp=None,
+                 target_lang=None):
+            objects, output_dir = compiler._fix_object_args(objects, output_dir)
+            libraries, library_dirs, _ = compiler._fix_lib_args(libraries, library_dirs, runtime_library_dirs)
+            if output_dir is not None:
+                output_filename = os.path.join(output_dir, output_filename)
+            os.makedirs(os.path.dirname(os.path.abspath(output_filename)), exist_ok=True)
+            link_opts = ["/LIBPATH:" + d for d in library_dirs]
+            link_opts += [lib if lib.endswith(".lib") else lib + ".lib" for lib in libraries]
+            link_opts += ["/EXPORT:" + sym for sym in (export_symbols or [])]
+            cmd = [SYCL_CXX, "-fsycl", "/nologo", "/LD", "/MD"] + list(extra_preargs or [])
+            cmd += objects + ["/Fe:" + output_filename] + list(extra_postargs or [])
+            compiler.spawn(cmd + ["/link"] + link_opts)
+
+        compiler.link = link
+
     def build_extensions(self):
+        if USE_SYCL:
+            # Compile and link everything with the DPC++ compiler.
+            if self.compiler.compiler_type == "msvc":
+                self._use_sycl_msvc()
+                build_ext.build_extensions(self)
+                return
+            # compiler_so_cxx and linker_so_cxx are used for C++ sources by newer setuptools.
+            for name in ("compiler_so", "compiler_so_cxx", "compiler_cxx", "linker_so", "linker_so_cxx"):
+                command = getattr(self.compiler, name, None)
+                if command:
+                    self.compiler.set_executable(name, [SYCL_CXX] + list(command[1:]))
+            build_ext.build_extensions(self)
+            return
         # Register .cu and .cuh as valid source extensions.
         self.compiler.src_extensions += [".cu", ".cuh"]
         # Save the original _compile method for later.
@@ -620,11 +677,51 @@ RandomNumberGenerator_ext = Extension(
     include_dirs=[NUMPY_INCLUDE, CUDA["include"], "Common/CUDA/"],
 )
 
+
+def _sycl_extension(ext):
+    """Point an extension at the SYCL sources in Common/SYCL."""
+    sources = []
+    for source in ext.sources:
+        name, extension = os.path.splitext(source)
+        if source.startswith("Common/CUDA/") and (
+            extension == ".cu" or source.endswith("GpuIds.cpp")
+        ):
+            source = "Common/SYCL/" + os.path.basename(name) + ".cpp"
+        sources.append(source)
+    # tigre_sycl.cpp reports through TIGRE_common (errors and warnings), so every
+    # SYCL extension needs it, including _gpuUtils.
+    if "Common/CUDA/TIGRE_common.cpp" not in sources:
+        sources.insert(0, "Common/CUDA/TIGRE_common.cpp")
+    ext.sources = sources + ["Common/SYCL/tigre_sycl.cpp"]
+    ext.define_macros = define_macros + [("TIGRE_SYCL_BUILD", "1")]
+    ext.library_dirs = []
+    ext.libraries = []
+    ext.runtime_library_dirs = []
+    ext.include_dirs = [NUMPY_INCLUDE, "Common/SYCL/", "Common/CUDA/"]
+    ext.extra_compile_args = SYCL_COMPILE_FLAGS
+    ext.extra_link_args = SYCL_LINK_FLAGS
+    return ext
+
+
+ext_modules = [
+    minPICCS_ext,
+    Ax_ext,
+    Atb_ext,
+    tv_proximal_ext,
+    minTV_ext,
+    AwminTV_ext,
+    gpuUtils_ext,
+    RandomNumberGenerator_ext,
+]
+if USE_SYCL:
+    ext_modules = [_sycl_extension(ext) for ext in ext_modules]
+
+
 setup(
     packages=find_packages(),
     include_package_data=True,
     data_files=[("data", ["Common/data/head.mat"])],
-    ext_modules=[minPICCS_ext, Ax_ext, Atb_ext, tv_proximal_ext, minTV_ext, AwminTV_ext, gpuUtils_ext, RandomNumberGenerator_ext],
+    ext_modules=ext_modules,
     py_modules=["tigre.py"],
     cmdclass={"build_ext": BuildExtension},
     # since the package has c code, the egg cannot be zipped
