@@ -745,4 +745,4 @@ void cpy_from_host(float* device_array,float* host_array,
     // their own boundary conditions there), so nothing is copied into them.
     stream->wait();
     stream->memcpy(device_array +offset_device,host_array +offset_host,bytes_device*sizeof(float));
-}
+}
