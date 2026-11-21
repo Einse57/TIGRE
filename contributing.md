@@ -23,6 +23,9 @@ You need an NVIDIA GPU, the CUDA toolkit and a C++ compiler (MSVC on Windows,
 gcc on Linux). See the full installation guides for
 [Python](https://cern.github.io/TIGRE/install/python.html) and
 [MATLAB](https://cern.github.io/TIGRE/install/matlab.html).
+Without an NVIDIA GPU, the Python package can also be built with SYCL (Intel oneAPI),
+which runs the tests on an Intel GPU or CPU; see the
+[SYCL build](https://cern.github.io/TIGRE/install/python.html#sycl-build-intel-oneapi).
 
 ### Python
 
