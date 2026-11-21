@@ -20,7 +20,7 @@ cdef extern from "gpuUtils.hpp":
     cdef void GetGpuName(int iDeviceId, char* pcName)
 cdef extern from "gpuUtils.hpp":
     cdef int GetGpuCount()
-# setup.py defines TIGRE_SYCL_BUILD for the SYCL build (TIGRE_SYCL=1).
+# setup.py defines TIGRE_SYCL_BUILD for the SYCL build (TIGRE_BACKEND=sycl).
 cdef extern from *:
     """
     #ifndef TIGRE_SYCL_BUILD

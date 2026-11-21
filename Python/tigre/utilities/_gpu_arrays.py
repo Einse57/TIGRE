@@ -10,7 +10,7 @@ GPUs (for example several), the array is copied to the host and the usual
 multi-GPU path runs, then the result is copied back: the result is the same,
 only slower.
 
-In the SYCL build (TIGRE_SYCL=1) TIGRE's devices cannot read CUDA memory, so
+In the SYCL build (TIGRE_BACKEND=sycl) TIGRE's devices cannot read CUDA memory, so
 the array always goes through the host: it is copied to the host, projected on
 the SYCL devices in ``gpuids`` (default: all) and the result is copied back to
 the array's GPU, as the same kind of array.
