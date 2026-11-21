@@ -17,6 +17,7 @@ pytestmark = pytest.mark.gpu
 
 import tigre  # noqa: E402,F401  (first: on Windows it puts CUDA's DLLs on the search path)
 from tigre.utilities.gpu import GpuIds  # noqa: E402
+from device_kinds import same_kind  # noqa: E402  (a GPU and the CPU device: list the GPU twice)
 
 try:
     from _minTV import minTV
@@ -53,6 +54,6 @@ def test_two_gpus_match_one(name, alpha, n):
         prior = np.random.default_rng(1).random((n, n, n), dtype=np.float32)
         call = lambda ids: minPICCS(img.copy(), prior, alpha, 10, 0.5, gpuids=ids)
     one = call(_gpus([0]))
-    two = call(_gpus([0, 1]))
+    two = call(_gpus(same_kind([0, 1])))
     err = float(np.abs(two - one).max() / np.abs(one).max())
     assert err < 1e-6, err
