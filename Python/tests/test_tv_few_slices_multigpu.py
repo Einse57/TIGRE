@@ -19,6 +19,7 @@ pytestmark = [pytest.mark.gpu, pytest.mark.extended]
 
 import tigre  # noqa: E402,F401  (first: on Windows it puts CUDA's DLLs on the search path)
 from tigre.utilities.gpu import GpuIds  # noqa: E402
+from device_kinds import same_kind  # noqa: E402  (a GPU and the CPU device: list the GPU twice)
 
 try:
     from _minTV import minTV
@@ -29,7 +30,7 @@ except ImportError:
     pytest.skip("TIGRE's CUDA extensions are not built", allow_module_level=True)
 
 try:
-    _ALL = list(GpuIds().devices)
+    _ALL = same_kind(GpuIds().devices)
 except Exception:  # no GPU or no driver
     _ALL = []
 if len(_ALL) < 2:
