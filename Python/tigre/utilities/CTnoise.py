@@ -1,8 +1,5 @@
 import numpy as np
-
-from .gpu import _import_extension
-
-RNG = _import_extension("_RandomNumberGenerator")
+import _RandomNumberGenerator as RNG
 
 def add(projections, Gaussian=None, Poisson=None, seed=None):
     """Add realistic noise to simulated projections.

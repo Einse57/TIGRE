@@ -1,8 +1,7 @@
 import numpy as np
+from _tv_proximal import tvdenoise
 
-from .gpu import GpuIds, _import_extension
-
-tvdenoise = _import_extension("_tv_proximal").tvdenoise
+from .gpu import GpuIds
 
 
 def im3ddenoise(img, iter=50, lmbda=15.0, gpuids=None):

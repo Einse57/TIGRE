@@ -4,6 +4,9 @@ import copy
 import time
 
 import numpy as np
+from _AwminTV import AwminTV
+from _minTV import minTV
+from _minPICCS import minPICCS
 from tigre.algorithms.single_pass_algorithms import FDK
 from tigre.utilities.Atb import Atb
 from tigre.utilities.Ax import Ax
@@ -11,11 +14,7 @@ from tigre.utilities.im3Dnorm import im3DNORM
 from tigre.utilities.init_multigrid import init_multigrid
 from tigre.utilities.order_subsets import order_subsets
 from tigre.utilities.Measure_Quality import Measure_Quality as MQ
-from tigre.utilities.gpu import GpuIds, _import_extension
-
-AwminTV = _import_extension("_AwminTV").AwminTV
-minTV = _import_extension("_minTV").minTV
-minPICCS = _import_extension("_minPICCS").minPICCS
+from tigre.utilities.gpu import GpuIds
 
 """
 This module is where the umbrella class IterativeReconAlg is located

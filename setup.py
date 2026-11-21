@@ -714,13 +714,8 @@ ext_modules = [
     gpuUtils_ext,
     RandomNumberGenerator_ext,
 ]
-# Extensions whose sources are not in Common/SYCL yet. The SYCL build leaves them out,
-# and the Python functions that need them raise ImportError when they are called.
-SYCL_PENDING = {
-    "_RandomNumberGenerator",
-}
 if USE_SYCL:
-    ext_modules = [_sycl_extension(ext) for ext in ext_modules if ext.name not in SYCL_PENDING]
+    ext_modules = [_sycl_extension(ext) for ext in ext_modules]
 
 
 setup(
