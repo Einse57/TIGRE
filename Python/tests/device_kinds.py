@@ -6,6 +6,7 @@ float32 arithmetic differently (and AwminTV amplifies that), so the results diff
 not by how the work is shared. Then same_kind() lists the first device once per device instead:
 the same multi-device code runs, on identical devices.
 """
+
 import functools
 import os
 import subprocess

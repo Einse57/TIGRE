@@ -16,6 +16,7 @@ What a split result should be (as in test_tv_low_memory.py for the CUDA build):
   that runs exactly in the plane between two pieces is still dropped (CUDA and
   SYCL alike): with pieces of 2 slices, the central detector row lies in one.
 """
+
 import os
 import subprocess
 import sys
@@ -86,7 +87,9 @@ def _assert_close(name, result, ref, finite_only=()):
     if name in finite_only:
         return  # see the module docstring
     diff = np.abs(result - ref).max() / np.abs(ref).max()
-    tolerance = {"minTV": 5e-2, "AwminTV": 5e-2, "AxSiddon": 1e-4, "tvdenoise": 1e-6}.get(name, 1e-5)
+    tolerance = {"minTV": 5e-2, "AwminTV": 5e-2, "AxSiddon": 1e-4, "tvdenoise": 1e-6}.get(
+        name, 1e-5
+    )
     assert diff < tolerance, (name, diff)
 
 
@@ -146,7 +149,9 @@ def test_tvdenoise_two_devices_one_split(tmp_path):
     script = tmp_path / "two_devices.py"
     script.write_text(TWO_DEVICES_SCRIPT)
     env = dict(os.environ, TIGRE_SYCL_MEMORY_LIMIT_MB="24")
-    result = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=600)
+    result = subprocess.run(
+        [sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=600
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     diff = float(result.stdout.rsplit("diff", 1)[1])
     assert diff < 1e-6, diff

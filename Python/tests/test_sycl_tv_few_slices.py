@@ -15,6 +15,7 @@ test_halos_stay_inside_the_image: minTV, AwminTV and minPICCS read only the call
 arrays (#899), with pieces thinner than the halo; as test_tv_host_bounds.py, which
 needs PyTorch or three GPUs, but with listings and TIGRE_SYCL_MEMORY_LIMIT_MB.
 """
+
 import json
 import os
 import subprocess
@@ -66,8 +67,13 @@ def _run(tmp_path, cases, limit_mb=None):
     env.pop("TIGRE_SYCL_MEMORY_LIMIT_MB", None)
     if limit_mb is not None:
         env["TIGRE_SYCL_MEMORY_LIMIT_MB"] = str(limit_mb)
-    result = subprocess.run([sys.executable, str(script), json.dumps(cases), str(out)], env=env,
-                            capture_output=True, text=True, timeout=600)
+    result = subprocess.run(
+        [sys.executable, str(script), json.dumps(cases), str(out)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     return dict(np.load(out))
 
@@ -87,8 +93,12 @@ def test_few_slices_match_one_listing(tmp_path, listings):
     out = _run(tmp_path, cases)
     for name in names:
         for nz in sizes:
-            _check(out["%s_%d_%d" % (name, nz, listings)], out["%s_%d_1" % (name, nz)],
-                   (name, nz), 1e-6)
+            _check(
+                out["%s_%d_%d" % (name, nz, listings)],
+                out["%s_%d_1" % (name, nz)],
+                (name, nz),
+                1e-6,
+            )
 
 
 def test_two_listings_with_little_memory(tmp_path):
@@ -128,7 +138,8 @@ def guarded(values):
     for addr in (base, base + page + body):
         assert libc.mprotect(ctypes.c_void_p(addr), page, 0) == 0
     keep.append(buf)
-    arr = np.frombuffer(buf, dtype=np.float32, count=values.size, offset=start - base).reshape(values.shape)
+    arr = np.frombuffer(buf, dtype=np.float32, count=values.size, offset=start - base)
+    arr = arr.reshape(values.shape)
     arr[:] = values
     return arr
 
@@ -151,18 +162,22 @@ ALL = ["minTV", "AwminTV", "minPICCS"]
 
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="uses mprotect for guard pages")
-@pytest.mark.parametrize("shape, listings, limit_mb, names", [
-    # 64 slices with a 6 MB limit: minTV and AwminTV in 22 pieces of 3, the last of 1; minPICCS (one more
-    # image-sized input) in pieces of 1. With 4 MB (too little for minPICCS), minTV and AwminTV in pieces of 1.
-    ((64, 256, 256), 1, 6, ALL),
-    ((64, 256, 256), 1, 4, ["minTV", "AwminTV"]),
-    # 7 slices on 3 listings: pieces of 3, 3 and 1.
-    ((7, 32, 40), 3, None, ALL),
-])
+@pytest.mark.parametrize(
+    "shape, listings, limit_mb, names",
+    [
+        # 64 slices with a 6 MB limit: minTV and AwminTV in 22 pieces of 3, the last of 1;
+        # minPICCS (one more image-sized input) in pieces of 1. With 4 MB (too little for
+        # minPICCS), minTV and AwminTV in pieces of 1.
+        ((64, 256, 256), 1, 6, ALL),
+        ((64, 256, 256), 1, 4, ["minTV", "AwminTV"]),
+        # 7 slices on 3 listings: pieces of 3, 3 and 1.
+        ((7, 32, 40), 3, None, ALL),
+    ],
+)
 def test_halos_stay_inside_the_image(tmp_path, shape, listings, limit_mb, names):
-    # Next to a piece thinner than the halo, the halo used to be copied from past the end of the caller's
-    # arrays, or before their start (#899). Here the image and the prior lie between two pages that cannot
-    # be read, so such a read ends the subprocess.
+    # Next to a piece thinner than the halo, the halo used to be copied from past the end of the
+    # caller's arrays, or before their start (#899). Here the image and the prior lie between two
+    # pages that cannot be read, so such a read ends the subprocess.
     script = tmp_path / "guard.py"
     script.write_text(GUARD_SCRIPT)
     out = tmp_path / "guard.npz"
@@ -170,8 +185,13 @@ def test_halos_stay_inside_the_image(tmp_path, shape, listings, limit_mb, names)
     env.pop("TIGRE_SYCL_MEMORY_LIMIT_MB", None)
     if limit_mb is not None:
         env["TIGRE_SYCL_MEMORY_LIMIT_MB"] = str(limit_mb)
-    result = subprocess.run([sys.executable, str(script), json.dumps([shape, listings, names]), str(out)], env=env,
-                            capture_output=True, text=True, timeout=600)
+    result = subprocess.run(
+        [sys.executable, str(script), json.dumps([shape, listings, names]), str(out)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
     assert result.returncode == 0, (result.returncode, result.stdout + result.stderr)
     for name, res in np.load(out).items():
         assert np.isfinite(res).all(), name
