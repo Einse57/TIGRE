@@ -155,23 +155,27 @@ namespace tigre_gd_awtv {
         q.parallel_for(sycl::range<1>(n), [=](sycl::id<1> i){ vec[i]-=vec2[i]; });
     }
     // Sum of squares of g_idata[0..n) into g_odata[0].
-    // Sum of squares of g_idata[0..n), one float per block of MAXTHREADS elements, into
-    // g_odata[0..(n+MAXTHREADS-1)/MAXTHREADS). The host adds the blocks in double (#856).
-    static void reduceNorm2(sycl::queue& q, const float* g_idata, float* g_odata, size_t n){
-        size_t nblocks=(n+MAXTHREADS-1)/MAXTHREADS;
+    // Sum of squares of g_idata (nslices slices of slice_px values), one float per block of
+    // MAXTHREADS values, the blocks restarting at each slice, into g_odata[0..nslices*blocks per slice).
+    // The host adds the blocks in double (#856). As the blocks follow the slices, each slice gives the
+    // same float sums however the image is shared between devices.
+    static void reduceNorm2(sycl::queue& q, const float* g_idata, float* g_odata, size_t nslices, size_t slice_px){
+        size_t bps=(slice_px+MAXTHREADS-1)/MAXTHREADS;
         size_t wg=q.get_device().get_info<sycl::info::device::max_work_group_size>();
         wg=wg<256? wg:256;
         while (MAXTHREADS%wg) wg--;
-        q.parallel_for(sycl::nd_range<1>(nblocks*wg, wg), [=](sycl::nd_item<1> it){
-            size_t blk=it.get_group(0);
+        q.parallel_for(sycl::nd_range<1>(nslices*bps*wg, wg), [=](sycl::nd_item<1> it){
+            size_t g=it.get_group(0);
+            size_t slice=g/bps;
+            size_t blk=g%bps;
             size_t lid=it.get_local_id(0);
             float s=0;
             for (size_t k=lid; k<MAXTHREADS; k+=wg){
-                size_t idx=blk*MAXTHREADS+k;
-                if (idx<n){ float v=g_idata[idx]; s+=v*v; }
+                size_t in_slice=blk*MAXTHREADS+k;
+                if (in_slice<slice_px){ float v=g_idata[slice*slice_px+in_slice]; s+=v*v; }
             }
             s=sycl::reduce_over_group(it.get_group(), s, sycl::plus<float>());
-            if (lid==0) g_odata[blk]=s;
+            if (lid==0) g_odata[g]=s;
         });
     }
 
@@ -304,6 +308,9 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
             float** d_norm2=    (float**)malloc(deviceCount*sizeof(float*));
             onError.add([p=d_norm2]{ free(p); });
          
+            // Room for the norm's block sums of one piece (see reduceNorm2).
+            const size_t blocks_per_slice=((size_t)image_size[0]*image_size[1]+MAXTHREADS-1)/MAXTHREADS;
+            const size_t mem_norm_parts=std::max(mem_auxiliary, sizeof(float)*blocks_per_slice*slices_per_split);
             // allocate memory in each GPU
             for (dev = 0; dev < deviceCount; dev++){
                 q=&tigreSyclQueue(gpuids[dev]);
@@ -317,9 +324,9 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
                 d_norm2[dev]=(float*)tigre::deviceMallocBytes(slices_per_split*mem_slice_image, gpuids[dev], "minimizeAwTV:GD_AwTV:GPU", "Adaptive-weighted total variation minimization (AwminTV)");
                 onError.add([p=d_norm2[dev], q]{ sycl::free(p, *q); });
                 q->memset(d_norm2[dev],0,slices_per_split*mem_slice_image).wait();
-                d_norm2aux[dev]=(float*)tigre::deviceMallocBytes(mem_auxiliary, gpuids[dev], "minimizeAwTV:GD_AwTV:GPU", "Adaptive-weighted total variation minimization (AwminTV)");
+                d_norm2aux[dev]=(float*)tigre::deviceMallocBytes(mem_norm_parts, gpuids[dev], "minimizeAwTV:GD_AwTV:GPU", "Adaptive-weighted total variation minimization (AwminTV)");
                 onError.add([p=d_norm2aux[dev], q]{ sycl::free(p, *q); });
-                q->memset(d_norm2aux[dev],0,mem_auxiliary).wait();
+                q->memset(d_norm2aux[dev],0,mem_norm_parts).wait();
             
             
             }
@@ -361,7 +368,7 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
             double * sumnorm2;
             sumnorm2=(double*)malloc(deviceCount*sizeof(double));
             onError.add([p=sumnorm2]{ free(p); });
-            size_t nparts_max=mem_auxiliary/sizeof(float)+1;
+            size_t nparts_max=mem_norm_parts/sizeof(float);
             float * normparts;
             normparts=(float*)malloc(deviceCount*nparts_max*sizeof(float));
             onError.add([p=normparts]{ free(p); });
@@ -481,7 +488,7 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
                         
                         
                             stream[dev*nStream_device+1]->wait();
-                            reduceNorm2(*stream[dev*nStream_device],d_norm2[dev], d_norm2aux[dev], total_pixels);
+                            reduceNorm2(*stream[dev*nStream_device],d_norm2[dev], d_norm2aux[dev], curr_slices, (size_t)image_size[0]*image_size[1]);
                         
                         }
                         for (dev = 0; dev < deviceCount; dev++){
@@ -490,7 +497,7 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
                             total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
 
                             stream[dev*nStream_device]->wait();
-                            stream[dev*nStream_device+1]->memcpy(normparts+dev*nparts_max, d_norm2aux[dev], ((total_pixels+MAXTHREADS-1)/MAXTHREADS)*sizeof(float));
+                            stream[dev*nStream_device+1]->memcpy(normparts+dev*nparts_max, d_norm2aux[dev], curr_slices*blocks_per_slice*sizeof(float));
                         }
                         for (dev = 0; dev < deviceCount; dev++){
                             q=&tigreSyclQueue(gpuids[dev]);
@@ -500,7 +507,7 @@ void aw_pocs_tv(float* img,float* dst,float alpha,const long* image_size, int ma
                             curr_slices=((sp*deviceCount+dev+1)*slices_per_split<image_size[2])?  slices_per_split:  image_size[2]-slices_per_split*(sp*deviceCount+dev);
                             total_pixels=curr_slices*(size_t)image_size[0]*image_size[1];
                             sumnorm2[dev]=0;
-                            for (size_t k=0; k<(total_pixels+MAXTHREADS-1)/MAXTHREADS; k++){
+                            for (size_t k=0; k<curr_slices*blocks_per_slice; k++){
                                 sumnorm2[dev]+=normparts[dev*nparts_max+k];
                             }
                         }
