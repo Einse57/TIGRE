@@ -175,3 +175,79 @@ Median (min–max) of 5 calls after one warm-up, in seconds:
   less than the timed median.
 - In the load samples taken during the runs (about once a minute), no program other than the
   measurement process and Windows (`System`) used the GPUs.
+
+### OS-SART on two B50s: where the time goes
+
+Follow-up to the 512³ OS-SART row above (69.6 s on one GPU, 85.5 s on two). Same machine, build
+(e736348), problem and Python package. The timings below come from a local build of the same commit
+with timers added to the SYCL Ax (Siddon) and Atb entry points (device-side kernel and copy times
+from SYCL queue profiling, host wall time for each phase) and timers around each step of the OS-SART
+block update in Python. Totals with and without the timers agree within 1%. The timers are not part
+of the branch.
+
+**One OS-SART block** (512³, block size 20, 2-GPU runs in a fresh process). Median wall time per call, in ms,
+1 GPU → 2 GPUs:
+- `Ax` (Siddon, 20 angles): 118 → 128. Kernel 67 → 31 per device. The rest is host-side work in
+  the entry point: device allocation 13 → 27 (one allocation per device, one after the other), the
+  copy of the full 512 MB image to every device, and waits. This part does not get smaller with a
+  second GPU.
+- `Atb` (FDK weights, 20 angles): 264 → 202. Kernel 133 → 63 per device. Copying the 512 MB image
+  back takes about 115 ms on one GPU and 2 × 57 ms on two, and the two copies do not overlap.
+- NumPy, on the host, the same with one or two GPUs: residual 21, image update 163, `clip` 125.
+
+**Whole runs**, 2 iterations (plus the W and V set-up, which calls `Atb` once per block), in seconds.
+Entry points = the total wall time of all `Ax` and `Atb` calls; kernel = kernel time on the busiest
+device; host = entry points minus kernel; NumPy = residual, update and clip:
+
+| GPUs | Size | Block size | Total | Entry points | Kernel | Host | NumPy |
+|---:|---|---:|---:|---:|---:|---:|---:|
+| 1 | 512³ | 20 | 31.2 | 18.5 | 9.6 | 8.9 | 11.2 |
+| 2 | 512³ | 20 | 28.4 | 15.6 | 4.5 | 11.0 | 11.1 |
+| 1 | 512³ | 60 | 18.2 | 13.3 | 10.2 | 3.1 | 4.2 |
+| 2 | 512³ | 60 | 13.6 | 8.7 | 4.8 | 3.9 | 4.2 |
+| 1 | 512³ | 180 | 13.9 | 11.6 | 10.4 | 1.2 | 1.8 |
+| 2 | 512³ | 180 | 9.0 | 6.7 | 5.1 | 1.6 | 1.9 |
+| 1 | 512³ | 360 | 12.8 | 11.1 | 10.3 | 0.8 | 1.3 |
+| 2 | 512³ | 360 | 7.7 | 6.0 | 5.1 | 0.9 | 1.3 |
+| 1 | 256³ | 20 | 4.1 | 2.4 | 1.1 | 1.3 | 1.5 |
+| 2 | 256³ | 20 | 4.0 | 2.2 | 0.6 | 1.6 | 1.5 |
+| 1 | 256³ | 360 | 1.7 | 1.4 | 1.2 | 0.1 | 0.2 |
+| 2 | 256³ | 360 | 1.1 | 0.8 | 0.6 | 0.2 | 0.3 |
+
+The number of `Ax`/`Atb` calls goes with 360/block size, and so do the host and NumPy parts.
+Total kernel time does not depend on the block size. At block size 20, kernels are 31% (1 GPU) and
+16% (2 GPUs) of the total. At 360 (one block, as in SIRT), they are 80% and 66%, and two GPUs
+take 0.60 of the 1-GPU time. CGLS calls `Ax` and `Atb` with all 360 angles, so its kernels dominate
+in the same way. In these runs (2 iterations, 512³), the busiest-device kernel was 94–96% of each
+call on one GPU and 83–93% on two.
+
+**Why the earlier figure was 85.5 s:**
+- **OS-SART on its own:** 512³, block size 20, 5 iterations, one warm-up call and 5 timed calls on
+  one GPU, then on two, in one process. It takes 69.8 s on one GPU and 64.1 s on two (scaling 1.09).
+  That is the same in a fresh process and with the timers.
+- **After other operations:** when other 2-GPU operations run earlier in the same process, the
+  2-GPU runs take 83–87 s. This happened in the full sequence, in the sequence without CGLS, and with
+  only `Atb` (FDK weights) before OS-SART. The 1-GPU runs that come in between take 69.4 s, with
+  the second GPU idle for about 7 minutes.
+- **What is slower:** in those runs, the second device (`level_zero:1`, the B50 without a display)
+  runs the OS-SART kernels about 3.2 times slower than the first device: a 20-angle Siddon
+  kernel takes 95–104 ms instead of 31 ms, and a 20-angle FDK backprojection takes 176–204 ms
+  instead of 63 ms. That adds about 21 s of kernel time per 5-iteration run. Host-side time
+  is 1.6 s higher, and the NumPy steps take the same time.
+- **Not the cause:** the slowdown did not appear after the second GPU had been idle for 7 minutes
+  with no earlier 2-GPU work (64.0 s). GPU memory use stayed small and steady (Windows GPU memory
+  counters). The 2-GPU operations before OS-SART in the same process scaled normally (median ratio
+  of second- to first-device kernel time 0.97–0.99).
+- **Not established:** whether the cause is the device's clock or power state or state in the
+  runtime. No clock or power readings were taken.
+
+**Things to check again after TIGRE 3.3.1**, which reworks the multi-GPU Ax/Atb host memory and
+splitting:
+- whether the per-call device allocations and the full-image copy to every device in `Ax`
+  are still made for every block;
+- whether the image copies back from the devices in `Atb` overlap;
+- whether the host result buffers are still allocated on every call;
+- the second-device slowdown after earlier 2-GPU work, with the GPU clock and power state recorded.
+
+The NumPy update and `clip` of the full image on every block (about 0.29 s per block at 512³)
+take the same time with any number of GPUs.
