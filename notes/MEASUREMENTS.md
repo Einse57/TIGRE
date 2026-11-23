@@ -123,3 +123,55 @@ Second call, median (min–max) of runs 2–5, in seconds; the Arc Pro B50 colum
 - **Parity:** Arc Pro B70 vs CPU device gives the same figures as the Arc Pro B50 vs CPU device above.
   The B70 outputs are bitwise equal to the B50 outputs, except minTV (up to 1.8e-6 of the maximum at
   128³ and 5.7e-5 on the large volume).
+
+## HyperX, 2x B50, Windows
+
+One and two Intel Arc Pro B50 GPUs (16 GB each) in the same desktop, with the SYCL backend on TIGRE
+3.3.0. These are baseline numbers on 3.3.0; TIGRE 3.3.1 reworks how multi-GPU Ax and Atb split the work.
+
+**Hardware and software:** Intel Core Ultra 7 265F, 64 GB RAM, two Intel Arc Pro B50 (GPU driver
+32.0.101.8976, Level Zero 1.15.39183+4; no other GPU installed); Windows 11 Pro 26H2 (build 26300);
+oneAPI DPC++/C++ 2025.2.0 (`icx`, conda-forge); Python 3.12.16, NumPy 2.2.6; a build of branch
+`sycl-on-3.3.0`, commit e736348. `sycl-ls` and TIGRE both list the two B50s.
+
+**Method:** cone beam, TIGRE head phantom, n³ voxels with the default geometry, n×n detector
+(pixel 0.8 mm × 512/n), 360 angles over 360°, for n = 256 and n = 512. The projections are made once
+with `tigre.Ax` on one GPU and used for all the other operations. Each operation runs in one Python
+process, started from a one-shot task in the Windows desktop session: first with `gpuids` set to
+device 0, then with devices 0 and 1. Each of the two runs is one warm-up call followed by 5 timed
+calls; the table gives the median of the 5 calls. Times are wall-clock time around the Python call and
+include host–device transfers. Scaling is the 1-GPU median divided by the 2-GPU median.
+
+Operations: `tigre.Ax` (interpolated), `tigre.Atb` (FDK weights and matched),
+`tigre.algorithms.fdk`, `tigre.algorithms.cgls` (10 iterations), `tigre.algorithms.ossart`
+(5 iterations, block size 20), and `minTV` on the phantom image (alpha 0.01, 50 iterations).
+
+Median (min–max) of 5 calls after one warm-up, in seconds:
+
+| Size | Operation | 1 GPU | 2 GPUs | Scaling |
+|---|---|---:|---:|---:|
+| 256³ | Ax, interpolated | 1.68 (1.68–1.69) | 0.852 (0.848–0.855) | 1.98 |
+| 256³ | Atb, FDK weights | 0.341 (0.34–0.342) | 0.185 (0.184–0.187) | 1.85 |
+| 256³ | Atb, matched | 0.348 (0.347–0.348) | 0.183 (0.182–0.184) | 1.90 |
+| 256³ | FDK | 0.419 (0.417–0.421) | 0.264 (0.261–0.295) | 1.59 |
+| 256³ | CGLS, 10 it. | 10.3 (10.2–10.5) | 6.7 (6.69–6.97) | 1.54 |
+| 256³ | OS-SART, 5 it. | 8.8 (8.75–9.27) | 8.56 (8.52–8.66) | 1.03 |
+| 256³ | minTV, 50 it. | 0.221 (0.221–0.222) | 0.144 (0.144–0.145) | 1.54 |
+| 512³ | Ax, interpolated | 14.1 (14.1–14.2) | 7.13 (7.12–7.16) | 1.98 |
+| 512³ | Atb, FDK weights | 2.71 (2.71–2.72) | 1.46 (1.46–1.47) | 1.86 |
+| 512³ | Atb, matched | 2.77 (2.77–2.77) | 1.43 (1.43–1.43) | 1.93 |
+| 512³ | FDK | 3.01 (3–3.03) | 1.75 (1.75–1.77) | 1.72 |
+| 512³ | CGLS, 10 it. | 78.8 (78.8–79.0) | 48.2 (48.1–49.3) | 1.64 |
+| 512³ | OS-SART, 5 it. | 69.6 (69.5–69.6) | 85.5 (83.2–85.8) | 0.81 |
+| 512³ | minTV, 50 it. | 1.62 (1.62–1.62) | 1.02 (1.02–1.02) | 1.59 |
+
+- **1 GPU vs 2 GPUs:** for every operation and both sizes, the 2-GPU output is bitwise equal to the
+  1-GPU output (RMSE 0, max. difference 0); all outputs are finite.
+- **512³:** all operations ran on one and on two B50s; no allocation failed.
+- **OS-SART:** scaling 1.03 at 256³; at 512³ it took longer on two GPUs than on one (85.5 s vs
+  69.6 s, scaling 0.81).
+- **Warm-up call** (in-process start-up included): at most 0.61 s longer than the timed median
+  (256³ CGLS and OS-SART on one GPU). The 2-GPU warm-up call of OS-SART at 512³ took 79.9 s, 5.6 s
+  less than the timed median.
+- In the load samples taken during the runs (about once a minute), no program other than the
+  measurement process and Windows (`System`) used the GPUs.
