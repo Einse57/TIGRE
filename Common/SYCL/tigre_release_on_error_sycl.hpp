@@ -123,6 +123,36 @@ inline bool tryMallocPieces(const int* devs, int ndev, size_t image_count, size_
     return ok;
 }
 
+
+// The same set of buffers on every device: true if all of them were allocated (kept in
+// ptrs[d*nbufs+b]); false, with nothing left allocated, if one failed, so that the caller
+// can split the image or the projections and try again (as tryMallocPieces does for Ax).
+inline bool tryMallocBuffers(const int* devs, int ndev, int nbufs, const size_t* bytes, void** ptrs) {
+    bool ok = true;
+    for (int i = 0; i < ndev * nbufs; i++) ptrs[i] = NULL;
+    for (int d = 0; d < ndev && ok; d++) {
+        sycl::queue& q = tigreSyclQueue(devs[d]);
+        try {
+            for (int b = 0; b < nbufs && ok; b++) {
+                ptrs[d * nbufs + b] = bytes[b] ? sycl::malloc_device(bytes[b], q) : NULL;
+                if (bytes[b] && !ptrs[d * nbufs + b]) ok = false;
+            }
+        } catch (const sycl::exception&) {
+            ok = false;
+        }
+    }
+    if (!ok) {
+        for (int d = 0; d < ndev; d++) {
+            sycl::queue& q = tigreSyclQueue(devs[d]);
+            for (int b = 0; b < nbufs; b++) {
+                if (ptrs[d * nbufs + b]) sycl::free(ptrs[d * nbufs + b], q);
+                ptrs[d * nbufs + b] = NULL;
+            }
+        }
+    }
+    return ok;
+}
+
 }  // namespace tigre
 
 #endif  // TIGRE_RELEASE_ON_ERROR_SYCL_HPP

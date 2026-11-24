@@ -51,6 +51,7 @@
 #include "TIGRE_common.hpp"
 #include "tigre_sycl.hpp"
 #include "tigre_release_on_error.hpp"
+#include "page_locking.hpp"
 #include <math.h>
 #include "GpuIds.hpp"
 
@@ -295,46 +296,91 @@ int voxel_backprojection2(float * projections, Geometry geo, float* result,float
         // Same image/projection split rule as the CUDA code
         unsigned int split_image;
         unsigned int split_projections;
-        splitCTbackprojection(gpuids,geo,nalpha,&split_image,&split_projections);
+        bool one_upload=false;
+        splitCTbackprojection(gpuids,geo,nalpha,&split_image,&split_projections,&one_upload);
 
-        // Each device gets a slab of the image along Z
-        Geometry* geoArray=(Geometry*)malloc(split_image*deviceCount*sizeof(Geometry));
-        createGeoArray(split_image*deviceCount,geo,geoArray,nalpha);
-        const unsigned int nGeo = split_image*deviceCount;
-        onError.add([geoArray, nGeo]{ freeGeoArray(nGeo, geoArray); });
-
-        size_t num_voxels_img = (size_t)geo.nVoxelX*(size_t)geo.nVoxelY*(size_t)geoArray[0].nVoxelZ;
         size_t num_pixels_proj = (size_t)geo.nDetecU*(size_t)geo.nDetecV;
-        // The projections of a split are all copied to the device at once: make the
-        // splits small enough to fit next to the image slab.
         size_t mem_GPU_global;
         checkFreeMemory(gpuids, &mem_GPU_global);
-        size_t mem_slab=num_voxels_img*sizeof(float);
-        size_t mem_avail=(mem_GPU_global>mem_slab) ? (mem_GPU_global-mem_slab)/2 : 0;
-        size_t max_split=std::max((size_t)PROJ_PER_KERNEL, (mem_avail/(num_pixels_proj*sizeof(float)))/PROJ_PER_KERNEL*PROJ_PER_KERNEL);
-        split_projections=std::max(split_projections, (unsigned int)((nalpha+max_split-1)/max_split));
-        unsigned int proj_split_size=(nalpha+split_projections-1)/split_projections;
-        unsigned int params_size=((proj_split_size+PROJ_PER_KERNEL-1)/PROJ_PER_KERNEL)*PROJ_PER_KERNEL;
+        std::vector<int> devs(deviceCount);
+        for (dev = 0; dev < deviceCount; dev++) devs[dev] = gpuids[dev];
 
+        // Allocate the image slab and the projection/parameter buffers on every device. If that
+        // fails although the estimate above fits, split the projections or the image in more
+        // pieces and try again, down to one slice and one projection, as the CUDA code does.
+        Geometry* geoArray;
+        unsigned int proj_split_size, params_size;
+        size_t num_voxels_img;
         std::vector<float*> dimage(deviceCount), dprojection(deviceCount), dSinCos(deviceCount);
         std::vector<Point3D*> dParams(deviceCount);
-        std::vector<std::vector<Point3D>> projParamsArrayHost(deviceCount, std::vector<Point3D>(7*params_size));
-        std::vector<std::vector<float>> projSinCosArrayHost(deviceCount, std::vector<float>(5*params_size));
-        for (dev = 0; dev < deviceCount; dev++){
+        std::vector<std::vector<Point3D> > projParamsArrayHost;
+        std::vector<std::vector<float> > projSinCosArrayHost;
+        while (true) {
+            geoArray = (Geometry*)malloc((size_t)split_image*deviceCount*sizeof(Geometry));
+            createGeoArray(split_image*deviceCount,geo,geoArray,nalpha);
+            num_voxels_img = (size_t)geoArray[0].nVoxelX*(size_t)geoArray[0].nVoxelY*(size_t)geoArray[0].nVoxelZ;
+            // The projections of a split are all copied to the device at once: make the
+            // splits small enough to fit next to the image slab.
+            size_t mem_slab=num_voxels_img*sizeof(float);
+            size_t mem_avail=(mem_GPU_global>mem_slab) ? (mem_GPU_global-mem_slab)/2 : 0;
+            size_t max_split=std::max((size_t)PROJ_PER_KERNEL, (mem_avail/(num_pixels_proj*sizeof(float)))/PROJ_PER_KERNEL*PROJ_PER_KERNEL);
+            unsigned int split_projections_try=std::max(split_projections, (unsigned int)((nalpha+max_split-1)/max_split));
+            proj_split_size=(nalpha+split_projections_try-1)/split_projections_try;
+            params_size=((proj_split_size+PROJ_PER_KERNEL-1)/PROJ_PER_KERNEL)*PROJ_PER_KERNEL;
+            const size_t bytes[4] = {
+                num_voxels_img*sizeof(float),
+                (size_t)proj_split_size*num_pixels_proj*sizeof(float),
+                (size_t)7*params_size*sizeof(Point3D),
+                (size_t)5*params_size*sizeof(float)
+            };
+            std::vector<void*> ptrs((size_t)deviceCount*4);
+            if (tigre::tryMallocBuffers(devs.data(), deviceCount, 4, bytes, ptrs.data())) {
+                split_projections=split_projections_try;
+                for (dev = 0; dev < deviceCount; dev++) {
+                    dimage[dev] = (float*)ptrs[(size_t)dev*4+0];
+                    dprojection[dev] = (float*)ptrs[(size_t)dev*4+1];
+                    dParams[dev] = (Point3D*)ptrs[(size_t)dev*4+2];
+                    dSinCos[dev] = (float*)ptrs[(size_t)dev*4+3];
+                }
+                projParamsArrayHost.assign(deviceCount, std::vector<Point3D>((size_t)7*params_size));
+                projSinCosArrayHost.assign(deviceCount, std::vector<float>((size_t)5*params_size));
+                break;
+            }
+            const unsigned int piece = geoArray[0].nVoxelZ;
+            freeGeoArray(split_image*deviceCount, geoArray);
+            if (proj_split_size>1) {
+                split_projections=split_projections_try+1;
+                continue;
+            }
+            if (piece<=1 || (unsigned long long)split_image*deviceCount>=(unsigned long long)geo.nVoxelZ)
+                tigreNotEnoughGpuMemory("Atb:voxel_backprojection2:GPUmemory","Backprojection",((size_t)geo.nVoxelX*geo.nVoxelY+num_pixels_proj)*sizeof(float),tigreSyclFreeMemory(gpuids[0]));
+            while ((unsigned long long)split_image*deviceCount<(unsigned long long)geo.nVoxelZ &&
+                   (geo.nVoxelZ+split_image*deviceCount-1)/(split_image*deviceCount)>=piece)
+                split_image++;
+        }
+        onError.add([geoArray, split_image, deviceCount]{ freeGeoArray(split_image*deviceCount, geoArray); });
+        for (dev = 0; dev < deviceCount; dev++) {
             sycl::queue* q = &tigreSyclQueue(gpuids[dev]);
             onError.addQueue(q);
-            float* image_d = tigre::deviceMalloc<float>(num_voxels_img, gpuids[dev], "Atb:Voxel_backprojection2:malloc", "Backprojection");
-            onError.add([image_d, q]{ sycl::free(image_d, *q); });
-            float* projection_d = tigre::deviceMalloc<float>((size_t)proj_split_size*num_pixels_proj, gpuids[dev], "Atb:Voxel_backprojection2:malloc", "Backprojection");
-            onError.add([projection_d, q]{ sycl::free(projection_d, *q); });
-            Point3D* params_d = tigre::deviceMalloc<Point3D>(7*params_size, gpuids[dev], "Atb:Voxel_backprojection2:malloc", "Backprojection");
-            onError.add([params_d, q]{ sycl::free(params_d, *q); });
-            float* sincos_d = tigre::deviceMalloc<float>(5*params_size, gpuids[dev], "Atb:Voxel_backprojection2:malloc", "Backprojection");
-            onError.add([sincos_d, q]{ sycl::free(sincos_d, *q); });
-            dimage[dev] = image_d;
-            dprojection[dev] = projection_d;
-            dParams[dev] = params_d;
-            dSinCos[dev] = sincos_d;
+            float* image_d = dimage[dev];
+            float* projection_d = dprojection[dev];
+            Point3D* params_d = dParams[dev];
+            float* sincos_d = dSinCos[dev];
+            onError.add([image_d, projection_d, params_d, sincos_d, q]{
+                sycl::free(image_d, *q); sycl::free(projection_d, *q);
+                sycl::free(params_d, *q); sycl::free(sincos_d, *q);
+            });
+        }
+
+        // Page-lock the projections and the result only when it is worth it (image split, or more than 2 devices)
+        bool result_registered = false, projections_registered = false;
+        if (tigre::worthPageLocking(tigre::hostRegisterSupported(devs.data(), deviceCount), gpuData, split_image, deviceCount)) {
+            const size_t result_bytes = (size_t)geo.nVoxelX*(size_t)geo.nVoxelY*(size_t)geo.nVoxelZ*sizeof(float);
+            const size_t proj_bytes = num_pixels_proj*(size_t)nalpha*sizeof(float);
+            result_registered = tigre::hostRegister(result, result_bytes, devs.data(), deviceCount);
+            if (result_registered) onError.add([result, devs]{ tigre::hostUnregister(result, devs.data(), (int)devs.size()); });
+            projections_registered = tigre::hostRegister(projections, proj_bytes, devs.data(), deviceCount);
+            if (projections_registered) onError.add([projections, devs]{ tigre::hostUnregister(projections, devs.data(), (int)devs.size()); });
         }
 
         for(unsigned int img_slice=0;img_slice<split_image;img_slice++){
@@ -421,6 +467,8 @@ int voxel_backprojection2(float * projections, Geometry geo, float* result,float
             sycl::free(dSinCos[dev], q);
         }
         freeGeoArray(split_image*deviceCount,geoArray);
+        if (result_registered) tigre::hostUnregister(result, devs.data(), deviceCount);
+        if (projections_registered) tigre::hostUnregister(projections, devs.data(), deviceCount);
     } catch (const sycl::exception& e) {
         mexErrMsgIdAndTxt("Atb:Voxel_backprojection2:SYCL", e.what());
     }
