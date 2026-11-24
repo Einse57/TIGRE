@@ -6,3 +6,7 @@ graft Python/demos
 global-exclude *.py[cod]
 prune Python/tests/__pycache__
 prune Python/demos/__pycache__
+# Files the CUDA/SYCL extensions need that are not on the CUDA source lists
+# (PEP 517 sdists, e.g. uv build --sdist, do not go through "python setup.py sdist").
+recursive-include Common/CUDA *.hpp *.h *.cuh *.cu *.cpp
+recursive-include Common/SYCL *.hpp *.h *.cpp

@@ -508,6 +508,14 @@ def include_headers(filename_list, sdist=False):
     filename_list += ["Common/CUDA/types_TIGRE.hpp", "Common/CUDA/errors.hpp", "Common/CUDA/tigre_release_on_error.hpp",
                       "Common/CUDA/launch_shapes.hpp", "Common/CUDA/page_locking.hpp",
                       "Common/CUDA/tv_gradient_descent.hpp"]
+    # SYCL sources and headers: a CUDA-built sdist can still be built with TIGRE_BACKEND=sycl.
+    # These are not in the CUDA extension source lists, so they would otherwise be left out.
+    if os.path.isdir("Common/SYCL"):
+        for name in sorted(os.listdir("Common/SYCL")):
+            if name.endswith((".cpp", ".hpp", ".h")):
+                path = "Common/SYCL/" + name
+                if path not in filename_list:
+                    filename_list.append(path)
     return filename_list + header_list
 
 
