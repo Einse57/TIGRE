@@ -50,8 +50,8 @@
 #include "voxel_backprojection.hpp"
 #include "TIGRE_common.hpp"
 #include "tigre_sycl.hpp"
-#include "tigre_release_on_error.hpp"
-#include "page_locking.hpp"
+#include "tigre_release_on_error_sycl.hpp"
+#include "page_locking_sycl.hpp"
 #include <math.h>
 #include "GpuIds.hpp"
 
@@ -268,7 +268,7 @@ int voxel_backprojection(float  *  projections, Geometry geo, float* result,floa
     }
     int dev;
     // If an error raises (Python build) before the end of this function, onError
-    // releases what it holds; see tigre_release_on_error.hpp.
+    // releases what it holds; see tigre_release_on_error_sycl.hpp.
     tigre::ReleaseOnError onError;
     try {
         // Same image/projection split rule as the CUDA code
@@ -286,6 +286,9 @@ int voxel_backprojection(float  *  projections, Geometry geo, float* result,floa
         // Allocate the image slab and the projection/parameter buffers on every device. If that
         // fails although the estimate above fits, split the projections or the image in more
         // pieces and try again, down to one slice and one projection, as the CUDA code does.
+        size_t max_alloc=tigreSyclMaxAlloc(gpuids[0]);
+        for (dev = 1; dev < deviceCount; dev++)
+            max_alloc=std::min(max_alloc, tigreSyclMaxAlloc(gpuids[dev]));
         Geometry* geoArray;
         unsigned int proj_split_size, params_size;
         size_t num_voxels_img;
@@ -298,10 +301,24 @@ int voxel_backprojection(float  *  projections, Geometry geo, float* result,floa
             createGeoArray(split_image*deviceCount,geo,geoArray,nalpha);
             num_voxels_img = (size_t)geoArray[0].nVoxelX*(size_t)geoArray[0].nVoxelY*(size_t)geoArray[0].nVoxelZ;
             // The projections of a split are all copied to the device at once: make the
-            // splits small enough to fit next to the image slab.
+            // splits small enough to fit next to the image slab and within max_alloc.
             size_t mem_slab=num_voxels_img*sizeof(float);
+            if (mem_slab > max_alloc) {
+                const unsigned int piece = geoArray[0].nVoxelZ;
+                freeGeoArray(split_image*deviceCount, geoArray);
+                if (piece<=1 || (unsigned long long)split_image*deviceCount>=(unsigned long long)geo.nVoxelZ)
+                    tigreNotEnoughGpuMemory("Atb:voxel_backprojection:GPUmemory","Backprojection",((size_t)geo.nVoxelX*geo.nVoxelY+num_pixels_proj)*sizeof(float),tigreSyclFreeMemory(gpuids[0]));
+                while ((unsigned long long)split_image*deviceCount<(unsigned long long)geo.nVoxelZ &&
+                       (geo.nVoxelZ+split_image*deviceCount-1)/(split_image*deviceCount)>=piece)
+                    split_image++;
+                continue;
+            }
             size_t mem_avail=(mem_GPU_global>mem_slab) ? (mem_GPU_global-mem_slab)/2 : 0;
             size_t max_split=std::max((size_t)PROJ_PER_KERNEL, (mem_avail/(num_pixels_proj*sizeof(float)))/PROJ_PER_KERNEL*PROJ_PER_KERNEL);
+            size_t max_angles_alloc=max_alloc/(num_pixels_proj*sizeof(float));
+            if (max_angles_alloc==0)
+                tigreNotEnoughGpuMemory("Atb:voxel_backprojection:GPUmemory","Backprojection",num_pixels_proj*sizeof(float),tigreSyclFreeMemory(gpuids[0]));
+            if (max_split>max_angles_alloc) max_split=max_angles_alloc;
             unsigned int split_projections_try=std::max(split_projections, (unsigned int)((nalpha+max_split-1)/max_split));
             proj_split_size=(nalpha+split_projections_try-1)/split_projections_try;
             params_size=((proj_split_size+PROJ_PER_KERNEL-1)/PROJ_PER_KERNEL)*PROJ_PER_KERNEL;
@@ -311,8 +328,11 @@ int voxel_backprojection(float  *  projections, Geometry geo, float* result,floa
                 (size_t)6*params_size*sizeof(Point3D),
                 (size_t)5*params_size*sizeof(float)
             };
+            const bool within_max_alloc =
+                bytes[0] <= max_alloc && bytes[1] <= max_alloc &&
+                bytes[2] <= max_alloc && bytes[3] <= max_alloc;
             std::vector<void*> ptrs((size_t)deviceCount*4);
-            if (tigre::tryMallocBuffers(devs.data(), deviceCount, 4, bytes, ptrs.data())) {
+            if (within_max_alloc && tigre::tryMallocBuffers(devs.data(), deviceCount, 4, bytes, ptrs.data())) {
                 split_projections=split_projections_try;
                 for (dev = 0; dev < deviceCount; dev++) {
                     dimage[dev] = (float*)ptrs[(size_t)dev*4+0];
@@ -336,6 +356,7 @@ int voxel_backprojection(float  *  projections, Geometry geo, float* result,floa
                    (geo.nVoxelZ+split_image*deviceCount-1)/(split_image*deviceCount)>=piece)
                 split_image++;
         }
+        tigreSyclLogAtbSplits(split_image, split_projections);
         onError.add([geoArray, split_image, deviceCount]{ freeGeoArray(split_image*deviceCount, geoArray); });
         for (dev = 0; dev < deviceCount; dev++) {
             sycl::queue* q = &tigreSyclQueue(gpuids[dev]);
@@ -461,9 +482,16 @@ void splitCTbackprojection(const GpuIds& gpuids, Geometry geo,int nalpha, unsign
     
     
     
-    // Does everything fit in the GPU?
-    
-    if(mem_image/deviceCount+mem_proj*PROJ_PER_KERNEL*2<mem_GPU_global){
+    size_t max_alloc=tigreSyclMaxAlloc(gpuids[0]);
+    for (int dev = 1; dev < deviceCount; dev++)
+        max_alloc=std::min(max_alloc, tigreSyclMaxAlloc(gpuids[dev]));
+    const size_t mem_slice=(size_t)geo.nVoxelX*(size_t)geo.nVoxelY*sizeof(float);
+    const size_t piece_unsplit=(size_t)((geo.nVoxelZ+deviceCount-1)/deviceCount)*mem_slice;
+
+    // Does everything fit in the GPU (and the image slab within max_alloc)?
+    // Projection buffers are capped separately so a small max_alloc does not
+    // change the image-split count or reuse the 2*PROJ_PER_KERNEL budget formula.
+    if(mem_image/deviceCount+mem_proj*PROJ_PER_KERNEL*2<mem_GPU_global && piece_unsplit<=max_alloc){
         // We only need to split if we have extra GPUs
         *split_image=1;
         *split_projections=1;
@@ -472,23 +500,29 @@ void splitCTbackprojection(const GpuIds& gpuids, Geometry geo,int nalpha, unsign
     // Does all the image fit in the GPU, with some slack for a stack of projections??
     else
     {
-        // As we can overlap memcpys from H2D of the projections, we should then minimize the amount of image splits.
-        // Lets assume to start with that we only need 1 stack of PROJ_PER_KERNEL projections. The rest is for the image.
         // The smallest working set is one stack of projections and one image slice.
-        const size_t mem_slice=(size_t)geo.nVoxelX*(size_t)geo.nVoxelY*sizeof(float);
         if (mem_GPU_global <= 2*mem_proj*PROJ_PER_KERNEL+mem_slice)
             tigreNotEnoughGpuMemory("Atb:voxel_backprojection:GPUmemory","Backprojection",2*mem_proj*PROJ_PER_KERNEL+mem_slice,mem_GPU_global);
         size_t mem_free=mem_GPU_global-2*mem_proj*PROJ_PER_KERNEL;
-        
-        *split_image=(mem_image/deviceCount+mem_free-1)/mem_free;
+        size_t max_piece=std::min(mem_free, max_alloc);
+        if (max_piece<mem_slice)
+            tigreNotEnoughGpuMemory("Atb:voxel_backprojection:GPUmemory","Backprojection",2*mem_proj*PROJ_PER_KERNEL+mem_slice,mem_GPU_global);
+        *split_image=(mem_image/deviceCount+max_piece-1)/max_piece;
         // Now knowing how many splits we have for images, we can recompute how many slices of projections actually
-        // fit on the GPU. Must be more than 0 obviously.
-        
+        // fit on the GPU. Must be more than 0 obviously. The total budget is used here, not max_alloc.
+
         mem_free=mem_GPU_global-(mem_image/deviceCount)/(*split_image); // NOTE: There is some rounding error, but its in the order of bytes, and we have 5% of GPU free jsut in case. We are safe
-        
-        
+
+
         *split_projections=(mem_proj*PROJ_PER_KERNEL*2+mem_free-1)/mem_free;
-        
+
+    }
+    if (mem_proj>max_alloc)
+        tigreNotEnoughGpuMemory("Atb:voxel_backprojection:GPUmemory","Backprojection",mem_proj,mem_GPU_global);
+    if ((size_t)nalpha*mem_proj>max_alloc) {
+        size_t max_angles=max_alloc/mem_proj;
+        unsigned int cap=(unsigned int)(((size_t)nalpha+max_angles-1)/max_angles);
+        if (cap>*split_projections) *split_projections=cap;
     }
 }
 
@@ -722,7 +756,7 @@ void computeDeltasCube(Geometry geo,int i, Point3D* xyzorigin, Point3D* deltaX, 
 
 void checkFreeMemory(const GpuIds& gpuids, size_t *mem_GPU_global){
     // Free memory where the SYCL runtime reports it, otherwise the global memory
-    // of the device (95%); never more than the largest single allocation.
+    // of the device (95%). The largest single allocation is applied when splitting.
     const int deviceCount = gpuids.GetLength();
     for (int dev = 0; dev < deviceCount; dev++){
         size_t mem = tigreSyclCheckFreeMemory(gpuids[dev],"Atb:Voxel_backprojection:GPUmemory");

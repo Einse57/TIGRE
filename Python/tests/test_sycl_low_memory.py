@@ -169,35 +169,78 @@ def _run_logged(tmp_path, name, limit_mb=None, max_alloc_mb=None):
         for line in result.stderr.splitlines()
         if line.startswith("TIGRE_SYCL_SPLITS=")
     ]
-    return dict(np.load(out)), logged
+    atb_logged = [
+        tuple(int(x) for x in line.split("=", 1)[1].split(","))
+        for line in result.stderr.splitlines()
+        if line.startswith("TIGRE_SYCL_ATB_SPLITS=")
+    ]
+    return dict(np.load(out)), logged, atb_logged
 
 
 def test_max_alloc_cap_splits_without_over_splitting_the_budget(tmp_path, unlimited):
     # 8 MB is enough for half the 16 MB image as a single allocation, so two
     # pieces suffice. Treating 8 MB as the total budget (MEMORY_LIMIT_MB)
     # leaves less after the projection buffers and needs a third piece.
-    split, logged = _run_logged(tmp_path, "maxalloc8", max_alloc_mb=8)
+    split, logged, atb_logged = _run_logged(tmp_path, "maxalloc8", max_alloc_mb=8)
     expected = _expected_splits(mem_budget=(1 << 62), max_alloc=8 << 20)
     assert expected == 2, expected
     assert logged == [expected, expected], logged  # interpolated and Siddon
-    # Interpolated matches the unsplit result. Two equal pieces put the split
-    # exactly on the mid-plane of this centred cone geometry, so Siddon drops
-    # the centre detector row in both pieces (the same mid-plane miss as in
-    # the CUDA split path, #859). Check Siddon against a 3-piece budget cap.
+    assert atb_logged == [(2, 1)], atb_logged
+    # Interpolated and Atb match the unsplit result. Two equal pieces put the
+    # split exactly on the mid-plane of this centred cone geometry, so Siddon
+    # drops the centre detector row in both pieces (the same mid-plane miss as
+    # in the CUDA split path, #859). Check Siddon against a 3-piece budget cap.
     _assert_close("Ax", split["Ax"], unlimited["Ax"])
+    _assert_close("Atb", split["Atb"], unlimited["Atb"])
 
-    budget, budget_logged = _run_logged(tmp_path, "limit8", limit_mb=8)
+    budget, budget_logged, budget_atb = _run_logged(tmp_path, "limit8", limit_mb=8)
     for name, ref in unlimited.items():
         _assert_close(name, budget[name], ref)
     expected_budget = _expected_splits(mem_budget=8 << 20, max_alloc=(1 << 62))
     assert expected_budget > expected, (expected_budget, expected)
     assert budget_logged == [expected_budget, expected_budget], budget_logged
+    assert budget_atb == [(3, 1)], budget_atb
 
 
 def test_large_max_alloc_does_not_split_when_the_budget_fits(tmp_path, unlimited):
     # A generous per-allocation cap must not force a split of a 16 MB image
     # that already fits in the total budget.
-    result, logged = _run_logged(tmp_path, "maxalloc64", max_alloc_mb=64)
+    result, logged, atb_logged = _run_logged(tmp_path, "maxalloc64", max_alloc_mb=64)
     for name, ref in unlimited.items():
         _assert_close(name, result[name], ref)
     assert logged == [1, 1], logged
+    assert atb_logged == [(1, 1)], atb_logged
+
+
+def test_atb_splits_projections_to_respect_max_alloc(tmp_path):
+    # 4 MB image and 2 MB projections (8 angles of 256x256): with max_alloc=1 MB,
+    # both image and projections split even though the total budget easily fits.
+    script = tmp_path / "atb_proj_split.py"
+    script.write_text(
+        "import sys, numpy as np, tigre\n"
+        "geo = tigre.geometry(mode='cone', default=True, nVoxel=np.array([64, 128, 128]))\n"
+        "geo.sVoxel = np.array([64.0, 128.0, 128.0])\n"
+        "geo.dVoxel = geo.sVoxel / geo.nVoxel\n"
+        "geo.nDetector = np.array([256, 256])\n"
+        "geo.dDetector = geo.sDetector / geo.nDetector\n"
+        "angles = np.linspace(0, 2 * np.pi, 8, endpoint=False, dtype=np.float32)\n"
+        "proj = np.random.default_rng(1).random((8, 256, 256), dtype=np.float32)\n"
+        "np.savez(sys.argv[1], Atb=tigre.Atb(proj, geo, angles))\n"
+    )
+    def run(tag, max_alloc_mb=None):
+        out = tmp_path / f"{tag}.npz"
+        env = dict(os.environ)
+        env.pop("TIGRE_SYCL_MEMORY_LIMIT_MB", None)
+        env.pop("TIGRE_SYCL_MAX_ALLOC_MB", None)
+        env["TIGRE_SYCL_SPLIT_LOG"] = "1"
+        if max_alloc_mb is not None:
+            env["TIGRE_SYCL_MAX_ALLOC_MB"] = str(max_alloc_mb)
+        r = subprocess.run([sys.executable, str(script), str(out)], env=env, check=True, timeout=600, capture_output=True, text=True)
+        atb = [tuple(int(x) for x in ln.split("=", 1)[1].split(",")) for ln in r.stderr.splitlines() if ln.startswith("TIGRE_SYCL_ATB_SPLITS=")]
+        return np.load(out)["Atb"], atb
+
+    ref, ref_splits = run("ref")
+    split, cap_splits = run("cap1", max_alloc_mb=1)
+    assert ref_splits == [(1, 1)], ref_splits
+    assert cap_splits == [(4, 2)], cap_splits
+    _assert_close("Atb", split, ref)

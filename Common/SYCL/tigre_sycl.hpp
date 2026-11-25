@@ -69,6 +69,9 @@ unsigned int tigreSyclImageSplits(size_t mem_image, size_t mem_slice,
 //! image pieces used (TIGRE_SYCL_SPLITS=N) to stderr, for tests.
 void tigreSyclLogSplits(unsigned int splits);
 
+//! @brief Same for Atb: print TIGRE_SYCL_ATB_SPLITS=img,proj to stderr.
+void tigreSyclLogAtbSplits(unsigned int split_image, unsigned int split_projections);
+
 //! @brief Point-sampled fetch with border (zero) addressing, as a CUDA
 //! cudaFilterModePoint + cudaAddressModeBorder texture with unnormalized
 //! coordinates.

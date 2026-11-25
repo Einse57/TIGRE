@@ -52,8 +52,8 @@
 #include "voxel_backprojection_parallel.hpp"
 #include "TIGRE_common.hpp"
 #include "tigre_sycl.hpp"
-#include "tigre_release_on_error.hpp"
-#include "page_locking.hpp"
+#include "tigre_release_on_error_sycl.hpp"
+#include "page_locking_sycl.hpp"
 #include <math.h>
 
 #define MAXTREADS 1024
@@ -280,7 +280,7 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
     }
     int dev;
     // If an error raises (Python build) before the end of this function, onError
-    // releases what it holds; see tigre_release_on_error.hpp.
+    // releases what it holds; see tigre_release_on_error_sycl.hpp.
     tigre::ReleaseOnError onError;
     try {
         // Same image/projection split rule as the CUDA code
@@ -298,6 +298,9 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
         // Allocate the image slab and the projection/parameter buffers on every device. If that
         // fails although the estimate above fits, split the projections or the image in more
         // pieces and try again, down to one slice and one projection, as the CUDA code does.
+        size_t max_alloc=tigreSyclMaxAlloc(gpuids[0]);
+        for (dev = 1; dev < deviceCount; dev++)
+            max_alloc=std::min(max_alloc, tigreSyclMaxAlloc(gpuids[dev]));
         Geometry* geoArray;
         unsigned int proj_split_size, params_size;
         size_t num_voxels_img;
@@ -310,10 +313,24 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
             createGeoArray(split_image*deviceCount,geo,geoArray,nalpha);
             num_voxels_img = (size_t)geoArray[0].nVoxelX*(size_t)geoArray[0].nVoxelY*(size_t)geoArray[0].nVoxelZ;
             // The projections of a split are all copied to the device at once: make the
-            // splits small enough to fit next to the image slab.
+            // splits small enough to fit next to the image slab and within max_alloc.
             size_t mem_slab=num_voxels_img*sizeof(float);
+            if (mem_slab > max_alloc) {
+                const unsigned int piece = geoArray[0].nVoxelZ;
+                freeGeoArray(split_image*deviceCount, geoArray);
+                if (piece<=1 || (unsigned long long)split_image*deviceCount>=(unsigned long long)geo.nVoxelZ)
+                    tigreNotEnoughGpuMemory("Atb:voxel_backprojection_parallel:GPUmemory","Backprojection (parallel beam)",((size_t)geo.nVoxelX*geo.nVoxelY+num_pixels_proj)*sizeof(float),tigreSyclFreeMemory(gpuids[0]));
+                while ((unsigned long long)split_image*deviceCount<(unsigned long long)geo.nVoxelZ &&
+                       (geo.nVoxelZ+split_image*deviceCount-1)/(split_image*deviceCount)>=piece)
+                    split_image++;
+                continue;
+            }
             size_t mem_avail=(mem_GPU_global>mem_slab) ? (mem_GPU_global-mem_slab)/2 : 0;
             size_t max_split=std::max((size_t)PROJ_PER_KERNEL, (mem_avail/(num_pixels_proj*sizeof(float)))/PROJ_PER_KERNEL*PROJ_PER_KERNEL);
+            size_t max_angles_alloc=max_alloc/(num_pixels_proj*sizeof(float));
+            if (max_angles_alloc==0)
+                tigreNotEnoughGpuMemory("Atb:voxel_backprojection_parallel:GPUmemory","Backprojection (parallel beam)",num_pixels_proj*sizeof(float),tigreSyclFreeMemory(gpuids[0]));
+            if (max_split>max_angles_alloc) max_split=max_angles_alloc;
             unsigned int split_projections_try=std::max(split_projections, (unsigned int)((nalpha+max_split-1)/max_split));
             proj_split_size=(nalpha+split_projections_try-1)/split_projections_try;
             params_size=((proj_split_size+PROJ_PER_KERNEL-1)/PROJ_PER_KERNEL)*PROJ_PER_KERNEL;
@@ -323,8 +340,11 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
                 (size_t)6*params_size*sizeof(Point3D),
                 (size_t)3*params_size*sizeof(float)
             };
+            const bool within_max_alloc =
+                bytes[0] <= max_alloc && bytes[1] <= max_alloc &&
+                bytes[2] <= max_alloc && bytes[3] <= max_alloc;
             std::vector<void*> ptrs((size_t)deviceCount*4);
-            if (tigre::tryMallocBuffers(devs.data(), deviceCount, 4, bytes, ptrs.data())) {
+            if (within_max_alloc && tigre::tryMallocBuffers(devs.data(), deviceCount, 4, bytes, ptrs.data())) {
                 split_projections=split_projections_try;
                 for (dev = 0; dev < deviceCount; dev++) {
                     dimage[dev] = (float*)ptrs[(size_t)dev*4+0];
@@ -348,6 +368,7 @@ int voxel_backprojection_parallel(float  *  projections, Geometry geo, float* re
                    (geo.nVoxelZ+split_image*deviceCount-1)/(split_image*deviceCount)>=piece)
                 split_image++;
         }
+        tigreSyclLogAtbSplits(split_image, split_projections);
         onError.add([geoArray, split_image, deviceCount]{ freeGeoArray(split_image*deviceCount, geoArray); });
         for (dev = 0; dev < deviceCount; dev++) {
             sycl::queue* q = &tigreSyclQueue(gpuids[dev]);

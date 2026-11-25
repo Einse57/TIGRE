@@ -139,6 +139,12 @@ void tigreSyclLogSplits(unsigned int splits){
         fprintf(stderr, "TIGRE_SYCL_SPLITS=%u\n", splits);
 }
 
+void tigreSyclLogAtbSplits(unsigned int split_image, unsigned int split_projections){
+    const char* value = getenv("TIGRE_SYCL_SPLIT_LOG");
+    if (value && *value && strcmp(value, "0") != 0)
+        fprintf(stderr, "TIGRE_SYCL_ATB_SPLITS=%u,%u\n", split_image, split_projections);
+}
+
 // Free memory as reported by the runtime, if it reports it.
 static bool reportedFreeMemory(int iDeviceId, size_t* free_bytes){
     const sycl::device& device = tigreSyclDevices()[iDeviceId];
