@@ -127,3 +127,12 @@ jobs:
         run: python -c "from tigre.utilities.gpu import getGpuNames; n = getGpuNames(); print(n); assert n"
       - name: Run tests
         run: python -m pytest -ra
+      # After the main suite: importing torch on Windows into the same process as
+      # the Intel OpenCL runtime aborts in numpy.linalg.svd (test_algorithms_cpu).
+      # These six tests are CPU-only (Ax/Atb are replaced by a dense matrix).
+      - name: Install PyTorch (CPU)
+        run: python -m pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Run PyTorch binding tests
+        env:
+          KMP_DUPLICATE_LIB_OK: "TRUE"
+        run: python -m pytest -ra Python/tests/test_pytorch_bindings.py
